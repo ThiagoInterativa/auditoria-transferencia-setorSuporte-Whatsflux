@@ -1264,7 +1264,78 @@ else:
 
     st.sidebar.warning("⏸️ Monitoramento pausado")
 
+st.sidebar.divider()
 
+st.sidebar.subheader("🧹 Limpeza")
+
+st.sidebar.caption(
+"Remove registros antigos do estado temporário. "
+"Atendimentos que ainda estão abertos são preservados."
+)
+
+data_limpeza = st.sidebar.date_input(
+"Limpar estado entre:",
+value=date.today() - timedelta(days=30),
+key="data_limpeza_temp"
+)
+
+data_limpeza_fim = st.sidebar.date_input(
+"e:",
+value=date.today(),
+key="data_limpeza_temp_fim"
+)
+
+if st.sidebar.button(
+"🧹 Limpar estado temporário",
+use_container_width=True
+):
+
+estado_atual = carregar_estado_temporario()
+
+# Busca os tickets que estão abertos neste momento
+try:
+
+    tickets_abertos = buscar_tickets_abertos(
+        st.session_state.whats_session
+    )
+
+    ids_abertos = {
+        str(t.get("id"))
+        for t in tickets_abertos
+        if t.get("id")
+    }
+
+except Exception as e:
+
+    st.sidebar.error(
+        f"Erro ao consultar tickets abertos: {e}"
+    )
+
+    ids_abertos = set()
+
+
+resultado_limpeza = limpar_estado_temporario(
+    data_inicial=data_limpeza,
+    data_final=data_limpeza_fim,
+    ids_abertos=ids_abertos,
+    confirmar=True
+)
+
+
+if resultado_limpeza["status"] == "OK":
+
+    st.sidebar.success(
+        f"✅ {resultado_limpeza['removidos']} "
+        f"registros temporários removidos."
+    )
+
+    if resultado_limpeza["abertos"] > 0:
+
+        st.sidebar.info(
+            f"🔒 {resultado_limpeza['abertos']} "
+            f"atendimentos ainda abertos foram preservados."
+        )
+        
 # ============================================================
 # TÍTULO
 # ============================================================
