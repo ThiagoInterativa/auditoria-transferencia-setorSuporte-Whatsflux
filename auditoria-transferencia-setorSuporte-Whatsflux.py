@@ -6,7 +6,7 @@ import os
 import io
 import pandas as pd
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
 
@@ -26,16 +26,13 @@ st.set_page_config(
 # ============================================================
 
 API_LOGIN_URL = "https://api.whatsflux.com.br/auth/login"
-
 API_TICKETS_URL = "https://api.whatsflux.com.br/tickets"
 
 # Fila que será monitorada
 QUEUE_ID = 18
 
-# Arquivo que guarda somente o estado atual dos tickets
+# Arquivos locais
 TEMP_STATE_FILE = "estado_monitoramento.json"
-
-# Banco principal da auditoria
 AUDIT_DB_FILE = "auditoria.db"
 
 # Fuso horário
@@ -46,43 +43,98 @@ DEFAULT_INTERVAL = 2.0
 
 
 # ============================================================
-# FUNÇÕES DE DATA/HORA
+# CSS
+# ============================================================
+
+st.markdown("""
+<style>
+
+.main-title {
+    font-size: 30px;
+    font-weight: 700;
+    margin-bottom: 5px;
+}
+
+.subtitle {
+    color: #64748b;
+    margin-bottom: 20px;
+}
+
+.metric-card {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 18px;
+    text-align: center;
+}
+
+.metric-number {
+    font-size: 30px;
+    font-weight: 700;
+    color: #38bdf8;
+}
+
+.metric-label {
+    color: #cbd5e1;
+    font-size: 14px;
+}
+
+.transfer-card {
+    background: #172033;
+    border-left: 5px solid #f59e0b;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+.status-online {
+    color: #22c55e;
+    font-weight: bold;
+}
+
+.status-error {
+    color: #ef4444;
+    font-weight: bold;
+}
+
+.small-info {
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
+# UTILITÁRIOS DE DATA/HORA
 # ============================================================
 
 def agora():
-    """Retorna data/hora atual no horário de São Paulo."""
     return datetime.now(TZ)
 
 
 def agora_iso():
-    """Retorna data/hora atual em formato ISO."""
     return agora().isoformat(timespec="seconds")
 
 
 def formatar_data_hora(valor):
-    """
-    Converte uma data ISO para o formato brasileiro.
-    """
-
     if not valor:
         return ""
 
     try:
-        dt = datetime.fromisoformat(str(valor))
+        dt = datetime.fromisoformat(valor)
 
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=TZ)
 
-        return dt.astimezone(TZ).strftime(
-            "%d/%m/%Y %H:%M:%S"
-        )
+        return dt.astimezone(TZ).strftime("%d/%m/%Y %H:%M:%S")
 
     except Exception:
         return str(valor)
 
 
 def data_inicio(d):
-    """Início do dia."""
     return datetime(
         d.year,
         d.month,
@@ -95,7 +147,6 @@ def data_inicio(d):
 
 
 def data_fim(d):
-    """Final do dia."""
     return datetime(
         d.year,
         d.month,
@@ -113,28 +164,16 @@ def data_fim(d):
 
 def carregar_estado_temporario():
     """
-    Carrega os atendimentos que estão atualmente sendo
-    acompanhados.
+    Carrega o estado atual dos atendimentos monitorados.
 
     IMPORTANTE:
+    Este arquivo NÃO é o banco de auditoria.
 
-    Este arquivo NÃO é a auditoria.
+    Ele serve apenas para o sistema saber:
+        Ticket 10130 -> atualmente Thiago
 
-    Exemplo:
-
-    ticket 10130
-        técnico atual = Thiago
-
-    Na próxima consulta:
-
-    ticket 10130
-        técnico atual = Gabriel
-
-    O sistema detecta:
-
+    Assim conseguimos detectar:
         Thiago -> Gabriel
-
-    E somente então grava no banco de auditoria.
     """
 
     if not os.path.exists(TEMP_STATE_FILE):
@@ -161,11 +200,7 @@ def carregar_estado_temporario():
 
 def salvar_estado_temporario(estado):
     """
-    Salva o estado temporário.
-
-    Usa arquivo .tmp para reduzir o risco de corromper
-    o arquivo caso o processo seja interrompido durante
-    a gravação.
+    Salva de forma relativamente segura usando arquivo temporário.
     """
 
     arquivo_temp = TEMP_STATE_FILE + ".tmp"
@@ -194,10 +229,6 @@ def salvar_estado_temporario(estado):
 # ============================================================
 
 def conectar_banco():
-    """
-    Abre conexão com SQLite.
-    """
-
     conn = sqlite3.connect(
         AUDIT_DB_FILE,
         timeout=30
@@ -209,33 +240,24 @@ def conectar_banco():
 
 
 def inicializar_banco():
-    """
-    Cria a tabela de auditoria caso ela ainda não exista.
-    """
 
     conn = conectar_banco()
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS auditoria (
-
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
             ticket_id INTEGER NOT NULL,
-
             ticket_uuid TEXT,
 
             contact_id INTEGER,
-
             cliente TEXT,
-
             telefone TEXT,
 
             tecnico_anterior_id INTEGER,
-
             tecnico_anterior TEXT,
 
             tecnico_atual_id INTEGER,
-
             tecnico_atual TEXT,
 
             evento TEXT NOT NULL,
@@ -255,8 +277,33 @@ def inicializar_banco():
     """)
 
     conn.commit()
+    conn.close()
+
+
+# ============================================================
+# CONSULTAR ÚLTIMO EVENTO DO TICKET
+# ============================================================
+
+def buscar_ultimo_evento(ticket_id):
+
+    conn = conectar_banco()
+
+    cursor = conn.execute("""
+        SELECT *
+        FROM auditoria
+        WHERE ticket_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (ticket_id,))
+
+    row = cursor.fetchone()
 
     conn.close()
+
+    if row:
+        return dict(row)
+
+    return None
 
 
 # ============================================================
@@ -270,21 +317,10 @@ def gravar_transferencia(
     tecnico_atual_id,
     tecnico_atual
 ):
-    """
-    Grava uma transferência no banco principal.
-
-    Exemplo:
-
-        Ticket: 10130
-        Cliente: 36202346487953
-        Anterior: Thiago
-        Atual: Gabriel
-    """
 
     contato = ticket.get("contact") or {}
 
     ticket_id = ticket.get("id")
-
     ticket_uuid = ticket.get("uuid")
 
     contact_id = contato.get("id")
@@ -301,7 +337,6 @@ def gravar_transferencia(
 
     conn.execute("""
         INSERT INTO auditoria (
-
             ticket_id,
             ticket_uuid,
 
@@ -318,15 +353,8 @@ def gravar_transferencia(
             evento,
             data_hora
         )
-
-        VALUES (
-            ?, ?, ?, ?, ?,
-            ?, ?,
-            ?, ?,
-            ?, ?
-        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-
         ticket_id,
         ticket_uuid,
 
@@ -341,12 +369,10 @@ def gravar_transferencia(
         tecnico_atual,
 
         "TRANSFERENCIA",
-
         agora_iso()
     ))
 
     conn.commit()
-
     conn.close()
 
 
@@ -359,19 +385,14 @@ def criar_sessao_whatsflux():
     try:
 
         email = st.secrets["WHATSFLUX_EMAIL"]
-
         senha = st.secrets["WHATSFLUX_SENHA"]
 
     except Exception:
 
-        return (
-            None,
-            "Configure WHATSFLUX_EMAIL e WHATSFLUX_SENHA nos Secrets."
-        )
+        return None, "Configure WHATSFLUX_EMAIL e WHATSFLUX_SENHA nos Secrets."
 
 
     session = requests.Session()
-
 
     session.headers.update({
 
@@ -399,19 +420,13 @@ def criar_sessao_whatsflux():
             "password": senha
         }
 
-
         response = session.post(
             API_LOGIN_URL,
             json=payload,
             timeout=15
         )
 
-
-        if response.status_code not in [
-            200,
-            201,
-            202
-        ]:
+        if response.status_code not in [200, 201, 202]:
 
             return (
                 None,
@@ -420,7 +435,6 @@ def criar_sessao_whatsflux():
 
 
         dados = response.json()
-
 
         token = (
             dados.get("token")
@@ -434,13 +448,18 @@ def criar_sessao_whatsflux():
                 "Authorization": f"Bearer {token}"
             })
 
+        else:
 
-        elif not session.cookies:
+            # Algumas APIs podem usar cookie de sessão.
+            # Nesse caso a própria Session continuará carregando
+            # os cookies recebidos.
 
-            return (
-                None,
-                "Login respondeu, mas não foi encontrado token nem cookie."
-            )
+            if not session.cookies:
+
+                return (
+                    None,
+                    "Login respondeu, mas não foi encontrado token nem cookie."
+                )
 
 
         return session, "OK"
@@ -452,7 +471,6 @@ def criar_sessao_whatsflux():
             None,
             f"Erro de conexão no login: {e}"
         )
-
 
     except Exception as e:
 
@@ -472,17 +490,12 @@ def buscar_tickets_abertos(session):
 
     page_number = 1
 
-
     while True:
 
         params = {
-
             "pageNumber": page_number,
-
             "status": "open",
-
             "showAll": "true",
-
             "queueIds": f"[{QUEUE_ID}]"
         }
 
@@ -495,7 +508,6 @@ def buscar_tickets_abertos(session):
                 timeout=15
             )
 
-
         except requests.RequestException as e:
 
             raise RuntimeError(
@@ -506,7 +518,7 @@ def buscar_tickets_abertos(session):
         if response.status_code == 401:
 
             raise RuntimeError(
-                "Sessão expirada. Será necessário fazer login novamente."
+                "Sessão expirada ou não autorizada (HTTP 401)."
             )
 
 
@@ -530,15 +542,10 @@ def buscar_tickets_abertos(session):
 
         tickets = dados.get("tickets") or []
 
-
         todos.extend(tickets)
 
 
-        has_more = dados.get(
-            "hasMore",
-            False
-        )
-
+        has_more = dados.get("hasMore", False)
 
         if not has_more:
 
@@ -548,7 +555,8 @@ def buscar_tickets_abertos(session):
         page_number += 1
 
 
-        # Segurança
+        # Segurança contra alguma API que fique retornando
+        # hasMore=true indefinidamente.
         if page_number > 100:
 
             break
@@ -566,47 +574,18 @@ def processar_ticket(
     estado
 ):
     """
-    Regra principal da auditoria.
+    Regra principal:
 
-    PRIMEIRA VEZ:
-
-        Ticket -> Thiago
-
-    Não grava no banco.
-
-    Apenas:
-
-        estado temporário
-        Ticket -> Thiago
-
-
-    PRÓXIMA CONSULTA:
-
-        Ticket -> Thiago
-
-    Nada acontece.
-
-
-    SE MUDAR:
-
-        Ticket -> Gabriel
-
-    Grava:
-
-        anterior = Thiago
-        atual    = Gabriel
-
-
-    Depois o estado temporário passa a ser:
-
-        Ticket -> Gabriel
+    1. Sem técnico -> ignora.
+    2. Primeira vez com técnico -> apenas coloca no estado temporário.
+    3. Mesmo técnico -> não faz nada.
+    4. Técnico diferente -> grava TRANSFERENCIA.
+    5. Atualiza o estado temporário.
     """
 
     ticket_id = ticket.get("id")
 
-
     if not ticket_id:
-
         return None
 
 
@@ -616,7 +595,7 @@ def processar_ticket(
 
 
     # ========================================================
-    # SEM TÉCNICO
+    # ATENDIMENTO SEM TÉCNICO
     # ========================================================
 
     if not user or not user_id:
@@ -626,7 +605,6 @@ def processar_ticket(
 
     tecnico_atual = user.get("name")
 
-
     if not tecnico_atual:
 
         return None
@@ -634,13 +612,16 @@ def processar_ticket(
 
     contato = ticket.get("contact") or {}
 
-
     cliente = (
         contato.get("name")
         or contato.get("number")
         or ""
     )
 
+
+    # ========================================================
+    # DADOS ATUAIS
+    # ========================================================
 
     dados_atuais = {
 
@@ -674,13 +655,9 @@ def processar_ticket(
         estado[chave] = dados_atuais
 
         return {
-
             "tipo": "ENTRADA_MONITORAMENTO",
-
             "ticket_id": ticket_id,
-
             "tecnico": tecnico_atual,
-
             "cliente": cliente
         }
 
@@ -688,13 +665,8 @@ def processar_ticket(
     anterior = estado[chave]
 
 
-    tecnico_anterior_id = anterior.get(
-        "tecnico_id"
-    )
-
-    tecnico_anterior = anterior.get(
-        "tecnico"
-    )
+    tecnico_anterior_id = anterior.get("tecnico_id")
+    tecnico_anterior = anterior.get("tecnico")
 
 
     # ========================================================
@@ -703,8 +675,10 @@ def processar_ticket(
 
     if str(tecnico_anterior_id) == str(user_id):
 
-        estado[chave] = {
+        # Atualizamos somente informações auxiliares.
+        # Não criamos evento de auditoria.
 
+        estado[chave] = {
             **anterior,
 
             "ticket_uuid": ticket.get("uuid"),
@@ -720,7 +694,6 @@ def processar_ticket(
             "tecnico": tecnico_atual
         }
 
-
         return None
 
 
@@ -729,7 +702,6 @@ def processar_ticket(
     # ========================================================
 
     gravar_transferencia(
-
         ticket=ticket,
 
         tecnico_anterior_id=tecnico_anterior_id,
@@ -742,12 +714,11 @@ def processar_ticket(
     )
 
 
-    # Atualiza o estado temporário
+    # Atualiza o estado para a nova situação.
     estado[chave] = dados_atuais
 
 
     return {
-
         "tipo": "TRANSFERENCIA",
 
         "ticket_id": ticket_id,
@@ -761,25 +732,23 @@ def processar_ticket(
 
 
 # ============================================================
-# EXECUTAR MONITORAMENTO
+# EXECUTAR UM CICLO DE MONITORAMENTO
 # ============================================================
 
 def executar_monitoramento(session):
 
     estado = carregar_estado_temporario()
 
-
-    tickets = buscar_tickets_abertos(
-        session
-    )
-
+    tickets = buscar_tickets_abertos(session)
 
     transferencias = []
 
-
     entradas = 0
 
+    ignorados = 0
 
+
+    # IDs atualmente abertos
     ids_abertos = set()
 
 
@@ -787,12 +756,9 @@ def executar_monitoramento(session):
 
         ticket_id = ticket.get("id")
 
-
         if ticket_id:
 
-            ids_abertos.add(
-                str(ticket_id)
-            )
+            ids_abertos.add(str(ticket_id))
 
 
         resultado = processar_ticket(
@@ -813,18 +779,17 @@ def executar_monitoramento(session):
 
         elif resultado["tipo"] == "TRANSFERENCIA":
 
-            transferencias.append(
-                resultado
-            )
+            transferencias.append(resultado)
 
 
-    salvar_estado_temporario(
-        estado
-    )
+    # ========================================================
+    # SALVA O ESTADO
+    # ========================================================
+
+    salvar_estado_temporario(estado)
 
 
     return {
-
         "tickets_abertos": len(tickets),
 
         "ids_abertos": ids_abertos,
@@ -838,7 +803,7 @@ def executar_monitoramento(session):
 
 
 # ============================================================
-# CONSULTAR AUDITORIA
+# AUDITORIA - CONSULTA
 # ============================================================
 
 def consultar_auditoria(
@@ -847,14 +812,8 @@ def consultar_auditoria(
     tecnico=None
 ):
 
-    inicio = data_inicio(
-        data_inicial
-    ).isoformat()
-
-
-    fim = data_fim(
-        data_final
-    ).isoformat()
+    inicio = data_inicio(data_inicial).isoformat()
+    fim = data_fim(data_final).isoformat()
 
 
     conn = conectar_banco()
@@ -862,38 +821,27 @@ def consultar_auditoria(
 
     sql = """
         SELECT
-
             id,
-
             ticket_id,
-
             ticket_uuid,
-
             contact_id,
-
             cliente,
-
             telefone,
 
             tecnico_anterior_id,
-
             tecnico_anterior,
 
             tecnico_atual_id,
-
             tecnico_atual,
 
             evento,
-
             data_hora
 
         FROM auditoria
 
         WHERE data_hora >= ?
-
         AND data_hora <= ?
     """
-
 
     params = [
         inicio,
@@ -909,7 +857,6 @@ def consultar_auditoria(
                 OR tecnico_atual = ?
             )
         """
-
 
         params.extend([
             tecnico,
@@ -936,7 +883,7 @@ def consultar_auditoria(
 
 
 # ============================================================
-# LISTAR TÉCNICOS
+# TÉCNICOS EXISTENTES NA AUDITORIA
 # ============================================================
 
 def listar_tecnicos_auditoria():
@@ -946,7 +893,6 @@ def listar_tecnicos_auditoria():
 
     df = pd.read_sql_query("""
         SELECT tecnico_anterior AS tecnico
-
         FROM auditoria
 
         WHERE tecnico_anterior IS NOT NULL
@@ -954,7 +900,6 @@ def listar_tecnicos_auditoria():
         UNION
 
         SELECT tecnico_atual AS tecnico
-
         FROM auditoria
 
         WHERE tecnico_atual IS NOT NULL
@@ -971,68 +916,93 @@ def listar_tecnicos_auditoria():
         return []
 
 
-    return (
-        df["tecnico"]
-        .dropna()
-        .tolist()
-    )
+    return df["tecnico"].dropna().tolist()
 
 
 # ============================================================
-# QUANTIDADE DE AUDITORIAS
+# ESTATÍSTICAS
 # ============================================================
 
 def quantidade_auditoria():
 
     conn = conectar_banco()
 
-
     cursor = conn.execute("""
         SELECT COUNT(*)
         FROM auditoria
     """)
 
-
     quantidade = cursor.fetchone()[0]
 
-
     conn.close()
-
 
     return quantidade
 
 
 # ============================================================
-# DATA DO ESTADO TEMPORÁRIO
+# ESTADO TEMPORÁRIO - DATA
 # ============================================================
 
 def data_estado(item):
 
-    valor = item.get(
-        "detectado_em"
-    )
-
+    valor = item.get("detectado_em")
 
     try:
 
-        dt = datetime.fromisoformat(
-            valor
-        )
-
+        dt = datetime.fromisoformat(valor)
 
         if dt.tzinfo is None:
-
-            dt = dt.replace(
-                tzinfo=TZ
-            )
-
+            dt = dt.replace(tzinfo=TZ)
 
         return dt
-
 
     except Exception:
 
         return None
+
+
+# ============================================================
+# VERIFICAR ESTADOS ABERTOS NO PERÍODO
+# ============================================================
+
+def encontrar_estados_abertos_no_periodo(
+    estado,
+    ids_abertos,
+    data_inicial,
+    data_final
+):
+
+    inicio = data_inicio(data_inicial)
+    fim = data_fim(data_final)
+
+    encontrados = []
+
+
+    for chave, item in estado.items():
+
+        dt = data_estado(item)
+
+        if not dt:
+            continue
+
+
+        # O registro pertence ao período selecionado?
+        dentro_periodo = (
+            inicio <= dt <= fim
+        )
+
+
+        if not dentro_periodo:
+            continue
+
+
+        # E o ticket ainda está aberto?
+        if str(chave) in ids_abertos:
+
+            encontrados.append(item)
+
+
+    return encontrados
 
 
 # ============================================================
@@ -1045,39 +1015,11 @@ def limpar_estado_temporario(
     ids_abertos,
     confirmar=False
 ):
-    """
-    Remove do estado temporário somente tickets
-    que NÃO estão mais abertos.
-
-    Isso evita apagar um ticket ainda em atendimento.
-
-    Exemplo:
-
-        Estado:
-
-        10130 -> Thiago
-        10131 -> Gabriel
-
-    Se 10130 ainda estiver aberto:
-
-        NÃO apaga 10130.
-
-    Se 10131 já fechou:
-
-        pode apagar 10131.
-    """
 
     estado = carregar_estado_temporario()
 
-
-    inicio = data_inicio(
-        data_inicial
-    )
-
-
-    fim = data_fim(
-        data_final
-    )
+    inicio = data_inicio(data_inicial)
+    fim = data_fim(data_final)
 
 
     candidatos = []
@@ -1089,82 +1031,61 @@ def limpar_estado_temporario(
 
         dt = data_estado(item)
 
-
         if not dt:
-
             continue
 
 
-        if not (
-            inicio <= dt <= fim
-        ):
-
+        if not (inicio <= dt <= fim):
             continue
 
 
         if str(chave) in ids_abertos:
 
-            abertos_no_periodo.append(
-                item
-            )
+            abertos_no_periodo.append(item)
 
         else:
 
-            candidatos.append(
-                chave
-            )
+            candidatos.append(chave)
 
 
-    # ========================================================
-    # CONFIRMAÇÃO
-    # ========================================================
+    # --------------------------------------------------------
+    # Segurança
+    # --------------------------------------------------------
 
     if abertos_no_periodo and not confirmar:
 
         return {
+            "status": "CONFIRMACAO_NECESSARIA",
 
-            "status":
-                "CONFIRMACAO_NECESSARIA",
+            "removiveis": len(candidatos),
 
-            "removiveis":
-                len(candidatos),
-
-            "abertos":
-                abertos_no_periodo
+            "abertos": abertos_no_periodo
         }
 
 
-    # ========================================================
-    # EXCLUSÃO
-    # ========================================================
+    # --------------------------------------------------------
+    # Exclusão
+    # --------------------------------------------------------
 
     for chave in candidatos:
 
-        estado.pop(
-            chave,
-            None
-        )
+        estado.pop(chave, None)
 
 
-    salvar_estado_temporario(
-        estado
-    )
+    salvar_estado_temporario(estado)
 
 
     return {
-
         "status": "OK",
 
-        "removidos":
-            len(candidatos),
+        "removidos": len(candidatos),
 
-        "abertos":
-            len(abertos_no_periodo)
+        "abertos": len(abertos_no_periodo)
     }
 
 
 # ============================================================
-# EXCLUIR AUDITORIA POR PERÍODO
+# EXCLUIR AUDITORIA
 # ============================================================
 
 def excluir_auditoria_periodo(
@@ -1172,14 +1093,8 @@ def excluir_auditoria_periodo(
     data_final
 ):
 
-    inicio = data_inicio(
-        data_inicial
-    ).isoformat()
-
-
-    fim = data_fim(
-        data_final
-    ).isoformat()
+    inicio = data_inicio(data_inicial).isoformat()
+    fim = data_fim(data_final).isoformat()
 
 
     conn = conectar_banco()
@@ -1189,18 +1104,14 @@ def excluir_auditoria_periodo(
         DELETE FROM auditoria
 
         WHERE data_hora >= ?
-
         AND data_hora <= ?
     """, (
-
         inicio,
-
         fim
     ))
 
 
     removidos = cursor.rowcount
-
 
     conn.commit()
 
@@ -1211,7 +1122,7 @@ def excluir_auditoria_periodo(
 
 
 # ============================================================
-# GERAR CSV
+# CSV
 # ============================================================
 
 def gerar_csv(df):
@@ -1225,32 +1136,22 @@ def gerar_csv(df):
 
 
     df.to_csv(
-
         buffer,
-
         index=False,
-
         sep=";",
-
         encoding="utf-8-sig"
     )
 
 
-    return buffer.getvalue().encode(
-        "utf-8-sig"
-    )
+    return buffer.getvalue().encode("utf-8-sig")
 
 
 # ============================================================
-# INICIALIZAÇÃO DO BANCO
+# INICIALIZAÇÃO
 # ============================================================
 
 inicializar_banco()
 
-
-# ============================================================
-# SESSION STATE
-# ============================================================
 
 if "whats_session" not in st.session_state:
 
@@ -1282,20 +1183,19 @@ if "total_ciclos" not in st.session_state:
     st.session_state.total_ciclos = 0
 
 
-if "ultimo_resultado" not in st.session_state:
+if "confirmar_limpeza_temp" not in st.session_state:
 
-    st.session_state.ultimo_resultado = {
+    st.session_state.confirmar_limpeza_temp = False
 
-        "tickets_abertos": 0,
 
-        "ids_abertos": set(),
+if "confirmar_exclusao_auditoria" not in st.session_state:
 
-        "estado": {},
+    st.session_state.confirmar_exclusao_auditoria = False
 
-        "entradas": 0,
 
-        "transferencias": []
-    }
+if "limpeza_temp_resultado" not in st.session_state:
+
+    st.session_state.limpeza_temp_resultado = None
 
 
 # ============================================================
@@ -1306,37 +1206,26 @@ st.sidebar.title("⚙️ Configurações")
 
 
 intervalo = st.sidebar.number_input(
-
     "Consultar API a cada (segundos)",
-
     min_value=0.5,
-
     max_value=300.0,
-
     value=DEFAULT_INTERVAL,
-
     step=0.5,
-
     key="intervalo_monitor"
 )
 
 
 st.sidebar.caption(
-    "O padrão é consultar a API a cada 2 segundos."
+    "Ex.: 2 = consulta a cada 2 segundos."
 )
 
 
 st.sidebar.divider()
 
 
-# ============================================================
-# CONTROLES DO MONITORAMENTO
-# ============================================================
-
 if st.sidebar.button(
     "▶️ Iniciar monitoramento",
-    disabled=st.session_state.monitorando,
-    use_container_width=True
+    disabled=st.session_state.monitorando
 ):
 
     st.session_state.monitorando = True
@@ -1346,8 +1235,7 @@ if st.sidebar.button(
 
 if st.sidebar.button(
     "⏸️ Pausar monitoramento",
-    disabled=not st.session_state.monitorando,
-    use_container_width=True
+    disabled=not st.session_state.monitorando
 ):
 
     st.session_state.monitorando = False
@@ -1364,34 +1252,33 @@ st.sidebar.write(
 
 
 st.sidebar.write(
-    f"**Intervalo:** {intervalo:.1f} segundos"
+    f"**Intervalo:** {intervalo:.1f}s"
 )
 
 
 if st.session_state.monitorando:
 
-    st.sidebar.success(
-        "🟢 Monitoramento ativo"
-    )
+    st.sidebar.success("🟢 Monitoramento ativo")
 
 else:
 
-    st.sidebar.warning(
-        "⏸️ Monitoramento pausado"
-    )
+    st.sidebar.warning("⏸️ Monitoramento pausado")
 
 
 # ============================================================
 # TÍTULO
 # ============================================================
 
-st.title(
-    "🔎 Auditoria de Transferências WhatsFlux"
+st.markdown(
+    '<div class="main-title">🔎 Auditoria de Transferências WhatsFlux</div>',
+    unsafe_allow_html=True
 )
 
-
-st.caption(
-    "Monitora responsáveis e registra somente alterações de técnico."
+st.markdown(
+    '<div class="subtitle">'
+    'Monitora responsáveis e registra somente alterações de técnico.'
+    '</div>',
+    unsafe_allow_html=True
 )
 
 
@@ -1403,11 +1290,9 @@ if st.session_state.whats_session is None:
 
     session, mensagem = criar_sessao_whatsflux()
 
-
     if session:
 
         st.session_state.whats_session = session
-
         st.session_state.login_status = "OK"
 
     else:
@@ -1423,313 +1308,234 @@ if st.session_state.whats_session is None:
 
     st.stop()
 
-
 # ============================================================
-# FUNÇÃO DO PAINEL DE MONITORAMENTO
+# FRAGMENTO DE MONITORAMENTO
 # ============================================================
 
-run_every = (
-    intervalo
-    if st.session_state.monitorando
-    else None
-)
+run_every = intervalo if st.session_state.monitorando else None
 
 
-@st.fragment(
-    run_every=run_every,
-    key="monitor_whatsflux"
-)
+@st.fragment(run_every=run_every, key="monitor_whatsflux")
 def painel_monitoramento():
 
-    # ========================================================
-    # EXECUTA MONITORAMENTO
-    # ========================================================
+    session = st.session_state.whats_session
 
-    if st.session_state.monitorando:
+    # --------------------------------------------------------
+    # Executa monitoramento
+    # --------------------------------------------------------
 
-        try:
+    try:
 
-            resultado = executar_monitoramento(
-                st.session_state.whats_session
-            )
+        resultado = executar_monitoramento(session)
 
+        st.session_state.total_ciclos += 1
+        st.session_state.ultima_execucao = agora()
 
-            # Salva resultado atual
-            st.session_state.ultimo_resultado = resultado
+        st.session_state.ultima_transferencias = (
+            resultado.get("transferencias", [])
+        )
 
+        # ----------------------------------------------------
+        # Se encontrou transferências
+        # ----------------------------------------------------
 
-            # Atualiza informações
-            st.session_state.ultima_execucao = agora_iso()
+        transferencias = resultado.get("transferencias", [])
 
+        if transferencias:
 
-            st.session_state.total_ciclos += 1
+            for transferencia in transferencias:
 
-
-            st.session_state.ultima_transferencias = (
-                resultado["transferencias"]
-            )
-
-
-        except RuntimeError as erro:
-
-            mensagem = str(erro)
-
-
-            # =================================================
-            # SESSÃO EXPIRADA
-            # =================================================
-
-            if "401" in mensagem or "Sessão expirada" in mensagem:
-
-                st.session_state.whats_session = None
-
-
-                nova_sessao, nova_mensagem = (
-                    criar_sessao_whatsflux()
+                st.toast(
+                    (
+                        f"🔄 Transferência detectada: "
+                        f"{transferencia['anterior']} → "
+                        f"{transferencia['atual']} "
+                        f"(Ticket #{transferencia['ticket_id']})"
+                    ),
+                    icon="🔎"
                 )
 
+    except Exception as e:
 
-                if nova_sessao:
+        st.error(
+            f"❌ Erro no monitoramento: {e}"
+        )
 
-                    st.session_state.whats_session = (
-                        nova_sessao
-                    )
-
-                    st.session_state.login_status = "OK"
-
-
-                else:
-
-                    st.error(
-                        f"❌ {nova_mensagem}"
-                    )
-
-
-            else:
-
-                st.error(
-                    f"❌ Erro no monitoramento: {mensagem}"
-                )
-
-
-        except Exception as erro:
-
-            st.error(
-                f"❌ Erro inesperado: {erro}"
-            )
+        return
 
 
     # ========================================================
-    # RESULTADO ATUAL
+    # INDICADORES
     # ========================================================
 
-    resultado = st.session_state.ultimo_resultado
-
-
-    estado_atual = (
-        resultado.get("estado")
-        or carregar_estado_temporario()
-    )
-
+    estado = resultado.get("estado", {})
 
     tickets_abertos = resultado.get(
         "tickets_abertos",
         0
     )
 
-
     entradas = resultado.get(
         "entradas",
         0
     )
 
-
-    transferencias_ciclo = (
-        resultado.get("transferencias")
-        or []
+    transferencias = resultado.get(
+        "transferencias",
+        []
     )
 
-
-    total_auditoria = quantidade_auditoria()
-
-
-    # ========================================================
-    # INDICADORES
-    #
-    # IMPORTANTE:
-    # Não usamos HTML aqui.
-    #
-    # Isso elimina o problema dos:
-    #
-    # <div>
-    # <strong>
-    # etc.
-    # ========================================================
 
     col1, col2, col3, col4 = st.columns(4)
 
 
     with col1:
 
-        st.metric(
-            "🎫 Tickets abertos",
-            tickets_abertos
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {tickets_abertos}
+                </div>
+                <div class="metric-label">
+                    Tickets abertos
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
 
     with col2:
 
-        st.metric(
-            "👁️ Em monitoramento",
-            len(estado_atual)
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {len(estado)}
+                </div>
+                <div class="metric-label">
+                    Em monitoramento
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
 
     with col3:
 
-        st.metric(
-            "👤 Novos responsáveis",
-            entradas
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {entradas}
+                </div>
+                <div class="metric-label">
+                    Novos responsáveis
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
 
     with col4:
 
-        st.metric(
-            "🔄 Transferências auditadas",
-            total_auditoria
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {quantidade_auditoria()}
+                </div>
+                <div class="metric-label">
+                    Transferências auditadas
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
+
+
+    st.write("")
 
 
     # ========================================================
-    # STATUS
+    # STATUS DO MONITOR
     # ========================================================
 
-    st.divider()
+    ultima = st.session_state.ultima_execucao
 
+    if ultima:
 
-    col_status, col_hora, col_ciclos = st.columns(3)
-
-
-    with col_status:
-
-        if st.session_state.monitorando:
-
-            st.success(
-                "🟢 Monitoramento ativo"
-            )
-
-        else:
-
-            st.warning(
-                "⏸️ Monitoramento pausado"
-            )
-
-
-    with col_hora:
-
-        st.write(
-            "**Última consulta:**"
+        horario = ultima.strftime(
+            "%d/%m/%Y %H:%M:%S"
         )
 
+    else:
 
-        if st.session_state.ultima_execucao:
-
-            st.write(
-                formatar_data_hora(
-                    st.session_state.ultima_execucao
-                )
-            )
-
-        else:
-
-            st.write(
-                "Aguardando..."
-            )
+        horario = "-"
 
 
-    with col_ciclos:
-
-        st.write(
-            "**Ciclos executados:**"
-        )
-
-
-        st.write(
-            st.session_state.total_ciclos
-        )
+    st.markdown(
+        f"""
+        <div class="small-info">
+            🟢 Monitoramento ativo |
+            Última consulta: <strong>{horario}</strong> |
+            Ciclos executados: <strong>{st.session_state.total_ciclos}</strong>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
     # ========================================================
     # TRANSFERÊNCIAS DETECTADAS NESTE CICLO
     # ========================================================
 
-    st.divider()
+    if transferencias:
+
+        st.write("")
+
+        st.subheader(
+            "🔄 Transferências detectadas neste ciclo"
+        )
 
 
-    st.subheader(
-        "🔄 Transferências detectadas neste ciclo"
-    )
+        for item in transferencias:
 
+            st.markdown(
+                f"""
+                <div class="transfer-card">
 
-    if transferencias_ciclo:
+                    <strong>
+                        Ticket #{item["ticket_id"]}
+                    </strong>
 
-        for transferencia in transferencias_ciclo:
+                    &nbsp; | &nbsp;
 
-            ticket_id = transferencia.get(
-                "ticket_id",
-                ""
+                    Cliente:
+                    <strong>
+                        {item["cliente"]}
+                    </strong>
+
+                    <br><br>
+
+                    👤
+                    <strong>
+                        {item["anterior"]}
+                    </strong>
+
+                    &nbsp; ➜ &nbsp;
+
+                    <strong>
+                        {item["atual"]}
+                    </strong>
+
+                </div>
+                """,
+                unsafe_allow_html=True
             )
-
-            cliente = transferencia.get(
-                "cliente",
-                ""
-            )
-
-            anterior = transferencia.get(
-                "anterior",
-                ""
-            )
-
-            atual = transferencia.get(
-                "atual",
-                ""
-            )
-
-
-            with st.container(border=True):
-
-                c1, c2, c3, c4 = st.columns(
-                    [1, 2, 2, 2]
-                )
-
-
-                with c1:
-
-                    st.write(
-                        f"**Ticket:** {ticket_id}"
-                    )
-
-
-                with c2:
-
-                    st.write(
-                        f"**Cliente:** {cliente}"
-                    )
-
-
-                with c3:
-
-                    st.write(
-                        f"**Anterior:** {anterior}"
-                    )
-
-
-                with c4:
-
-                    st.write(
-                        f"**Atual:** {atual}"
-                    )
 
 
     else:
@@ -1740,679 +1546,57 @@ def painel_monitoramento():
 
 
     # ========================================================
-    # ATENDIMENTOS ATUALMENTE MONITORADOS
+    # ESTADO ATUAL DOS ATENDIMENTOS
     # ========================================================
 
-    st.divider()
+    with st.expander(
+        "👥 Atendimentos atualmente monitorados",
+        expanded=False
+    ):
 
+        if estado:
 
-    st.subheader(
-        "👥 Atendimentos atualmente monitorados"
-    )
+            linhas = []
 
+            for item in estado.values():
 
-    if estado_atual:
+                linhas.append({
 
-        lista_monitorados = []
+                    "Ticket": item.get("ticket_id"),
 
+                    "Cliente": item.get("cliente"),
 
-        for chave, item in estado_atual.items():
+                    "Telefone": item.get("telefone"),
 
-            lista_monitorados.append({
+                    "Técnico": item.get("tecnico"),
 
-                "Ticket ID":
-                    item.get("ticket_id"),
-
-                "Cliente":
-                    item.get("cliente"),
-
-                "Telefone":
-                    item.get("telefone"),
-
-                "Técnico atual":
-                    item.get("tecnico"),
-
-                "ID técnico":
-                    item.get("tecnico_id"),
-
-                "Detectado em":
-                    formatar_data_hora(
+                    "Detectado em": formatar_data_hora(
                         item.get("detectado_em")
                     )
-            })
+
+                })
 
 
-        df_monitorados = pd.DataFrame(
-            lista_monitorados
-        )
+            df_estado = pd.DataFrame(linhas)
 
 
-        df_monitorados = (
-            df_monitorados
-            .sort_values(
-                "Detectado em",
-                ascending=False
+            if not df_estado.empty:
+
+                st.dataframe(
+                    df_estado,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+        else:
+
+            st.info(
+                "Nenhum atendimento com técnico está sendo monitorado."
             )
-        )
-
-
-        st.dataframe(
-            df_monitorados,
-            use_container_width=True,
-            hide_index=True
-        )
-
-
-    else:
-
-        st.info(
-            "Nenhum atendimento com técnico está sendo monitorado."
-        )
 
 
 # ============================================================
-# EXECUTA O PAINEL
+# EXECUTA O MONITORAMENTO
 # ============================================================
 
 painel_monitoramento()
-
-
-# ============================================================
-# HISTÓRICO DE TRANSFERÊNCIAS
-# ============================================================
-
-st.divider()
-
-
-st.header(
-    "📊 Histórico de Transferências"
-)
-
-
-# ============================================================
-# FILTROS
-# ============================================================
-
-col_data1, col_data2, col_tecnico = st.columns(
-    [1, 1, 1]
-)
-
-
-with col_data1:
-
-    data_inicial = st.date_input(
-        "Data inicial",
-        value=date.today(),
-        key="filtro_data_inicial"
-    )
-
-
-with col_data2:
-
-    data_final = st.date_input(
-        "Data final",
-        value=date.today(),
-        key="filtro_data_final"
-    )
-
-
-with col_tecnico:
-
-    tecnicos = listar_tecnicos_auditoria()
-
-
-    tecnico_filtro = st.selectbox(
-        "Técnico",
-        ["Todos"] + tecnicos,
-        key="filtro_tecnico"
-    )
-
-
-# ============================================================
-# VALIDAÇÃO DE DATAS
-# ============================================================
-
-if data_inicial > data_final:
-
-    st.error(
-        "A data inicial não pode ser maior que a data final."
-    )
-
-    st.stop()
-
-
-# ============================================================
-# CONSULTAR AUDITORIA
-# ============================================================
-
-df_auditoria = consultar_auditoria(
-
-    data_inicial,
-
-    data_final,
-
-    tecnico_filtro
-)
-
-
-# ============================================================
-# RESULTADO DO HISTÓRICO
-# ============================================================
-
-if df_auditoria.empty:
-
-    st.info(
-        "Nenhuma transferência encontrada no período selecionado."
-    )
-
-else:
-
-    # Formata data
-    if "data_hora" in df_auditoria.columns:
-
-        df_auditoria["data_hora"] = (
-            pd.to_datetime(
-                df_auditoria["data_hora"],
-                errors="coerce"
-            )
-            .dt.strftime(
-                "%d/%m/%Y %H:%M:%S"
-            )
-        )
-
-
-    # ========================================================
-    # COLUNAS PRINCIPAIS
-    # ========================================================
-
-    colunas_exibicao = [
-
-        "id",
-
-        "ticket_id",
-
-        "cliente",
-
-        "telefone",
-
-        "tecnico_anterior",
-
-        "tecnico_atual",
-
-        "evento",
-
-        "data_hora"
-    ]
-
-
-    colunas_exibicao = [
-
-        coluna
-
-        for coluna in colunas_exibicao
-
-        if coluna in df_auditoria.columns
-    ]
-
-
-    df_exibicao = df_auditoria[
-        colunas_exibicao
-    ].copy()
-
-
-    df_exibicao = df_exibicao.rename(
-        columns={
-
-            "id": "Registro",
-
-            "ticket_id": "Ticket",
-
-            "cliente": "Cliente",
-
-            "telefone": "Telefone",
-
-            "tecnico_anterior": "Técnico anterior",
-
-            "tecnico_atual": "Técnico atual",
-
-            "evento": "Evento",
-
-            "data_hora": "Data/Hora"
-        }
-    )
-
-
-    st.dataframe(
-        df_exibicao,
-        use_container_width=True,
-        hide_index=True
-    )
-
-
-    # ========================================================
-    # CSV
-    # ========================================================
-
-    st.download_button(
-
-        label="📥 Baixar CSV da auditoria",
-
-        data=gerar_csv(
-            df_auditoria
-        ),
-
-        file_name=(
-            "auditoria_transferencias_"
-            f"{data_inicial.strftime('%Y-%m-%d')}_"
-            f"{data_final.strftime('%Y-%m-%d')}.csv"
-        ),
-
-        mime="text/csv",
-
-        use_container_width=True
-    )
-
-
-# ============================================================
-# ADMINISTRAÇÃO DO ESTADO TEMPORÁRIO
-# ============================================================
-
-st.divider()
-
-
-st.header(
-    "🧹 Limpeza do estado temporário"
-)
-
-
-st.caption(
-    "O estado temporário contém somente os atendimentos que "
-    "o monitoramento usa para descobrir mudanças de técnico."
-)
-
-
-col_temp1, col_temp2 = st.columns(
-    [1, 2]
-)
-
-
-with col_temp1:
-
-    if os.path.exists(TEMP_STATE_FILE):
-
-        estado_temp = carregar_estado_temporario()
-
-        st.metric(
-            "Registros temporários",
-            len(estado_temp)
-        )
-
-    else:
-
-        st.metric(
-            "Registros temporários",
-            0
-        )
-
-
-with col_temp2:
-
-    st.write(
-        "Selecione o período para limpar registros antigos."
-    )
-
-
-col_limpeza1, col_limpeza2 = st.columns(
-    2
-)
-
-
-with col_limpeza1:
-
-    data_limpeza_inicial = st.date_input(
-        "Data inicial da limpeza",
-        value=date.today(),
-        key="data_limpeza_temp_inicio"
-    )
-
-
-with col_limpeza2:
-
-    data_limpeza_final = st.date_input(
-        "Data final da limpeza",
-        value=date.today(),
-        key="data_limpeza_temp_fim"
-    )
-
-
-if st.button(
-    "🧹 Verificar registros temporários para limpeza",
-    use_container_width=True
-):
-
-    resultado_atual = (
-        st.session_state.ultimo_resultado
-    )
-
-
-    ids_abertos = resultado_atual.get(
-        "ids_abertos",
-        set()
-    )
-
-
-    resultado_limpeza = limpar_estado_temporario(
-
-        data_limpeza_inicial,
-
-        data_limpeza_final,
-
-        ids_abertos,
-
-        confirmar=False
-    )
-
-
-    if (
-        resultado_limpeza["status"]
-        == "CONFIRMACAO_NECESSARIA"
-    ):
-
-        st.warning(
-            "Existem atendimentos do período que ainda "
-            "estão abertos. Eles não serão apagados."
-        )
-
-
-        st.write(
-            f"Registros que podem ser removidos: "
-            f"{resultado_limpeza['removiveis']}"
-        )
-
-
-        st.write(
-            f"Atendimentos ainda abertos protegidos: "
-            f"{len(resultado_limpeza['abertos'])}"
-        )
-
-
-        st.session_state.confirmar_limpeza_temp = True
-
-
-    else:
-
-        st.success(
-            f"Limpeza concluída. "
-            f"{resultado_limpeza['removidos']} registros removidos."
-        )
-
-
-if st.session_state.get(
-    "confirmar_limpeza_temp",
-    False
-):
-
-    st.warning(
-        "Confirme abaixo para excluir os registros "
-        "temporários que não estão mais abertos."
-    )
-
-
-    col_conf1, col_conf2 = st.columns(
-        2
-    )
-
-
-    with col_conf1:
-
-        if st.button(
-            "✅ Confirmar limpeza",
-            type="primary",
-            use_container_width=True
-        ):
-
-            resultado_atual = (
-                st.session_state.ultimo_resultado
-            )
-
-
-            ids_abertos = resultado_atual.get(
-                "ids_abertos",
-                set()
-            )
-
-
-            resultado_limpeza = (
-                limpar_estado_temporario(
-
-                    data_limpeza_inicial,
-
-                    data_limpeza_final,
-
-                    ids_abertos,
-
-                    confirmar=True
-                )
-            )
-
-
-            st.session_state.confirmar_limpeza_temp = False
-
-
-            st.success(
-                f"{resultado_limpeza['removidos']} "
-                f"registros temporários removidos."
-            )
-
-
-            st.rerun()
-
-
-    with col_conf2:
-
-        if st.button(
-            "❌ Cancelar",
-            use_container_width=True
-        ):
-
-            st.session_state.confirmar_limpeza_temp = False
-
-            st.rerun()
-
-
-# ============================================================
-# ADMINISTRAÇÃO DA AUDITORIA
-# ============================================================
-
-st.divider()
-
-
-st.header(
-    "🗑️ Administração da auditoria"
-)
-
-
-st.caption(
-    "Use esta opção somente se realmente quiser apagar "
-    "registros do banco principal de auditoria."
-)
-
-
-col_del1, col_del2 = st.columns(
-    2
-)
-
-
-with col_del1:
-
-    data_exclusao_inicio = st.date_input(
-        "Data inicial da exclusão",
-        value=date.today(),
-        key="data_exclusao_inicio"
-    )
-
-
-with col_del2:
-
-    data_exclusao_fim = st.date_input(
-        "Data final da exclusão",
-        value=date.today(),
-        key="data_exclusao_fim"
-    )
-
-
-if st.button(
-    "🗑️ Excluir registros da auditoria neste período",
-    use_container_width=True
-):
-
-    if data_exclusao_inicio > data_exclusao_fim:
-
-        st.error(
-            "A data inicial não pode ser maior que a data final."
-        )
-
-    else:
-
-        st.session_state.confirmar_exclusao_auditoria = True
-
-
-if st.session_state.get(
-    "confirmar_exclusao_auditoria",
-    False
-):
-
-    st.error(
-        "ATENÇÃO: esta operação apagará permanentemente "
-        "os registros da auditoria selecionados."
-    )
-
-
-    col_del_conf1, col_del_conf2 = st.columns(
-        2
-    )
-
-
-    with col_del_conf1:
-
-        if st.button(
-            "⚠️ CONFIRMAR EXCLUSÃO",
-            type="primary",
-            use_container_width=True
-        ):
-
-            removidos = excluir_auditoria_periodo(
-
-                data_exclusao_inicio,
-
-                data_exclusao_fim
-            )
-
-
-            st.session_state.confirmar_exclusao_auditoria = False
-
-
-            st.success(
-                f"{removidos} registros de auditoria foram removidos."
-            )
-
-
-            st.rerun()
-
-
-    with col_del_conf2:
-
-        if st.button(
-            "❌ Cancelar exclusão",
-            use_container_width=True
-        ):
-
-            st.session_state.confirmar_exclusao_auditoria = False
-
-            st.rerun()
-
-
-# ============================================================
-# INFORMAÇÕES DO SISTEMA
-# ============================================================
-
-st.divider()
-
-
-with st.expander(
-    "ℹ️ Como funciona a auditoria"
-):
-
-    st.write(
-        """
-        **1. Cliente entra em contato**
-
-        O ticket aparece na fila monitorada.
-
-        Exemplo:
-
-        Ticket 10130 → Thiago
-
-        Neste momento nada é gravado no banco de auditoria.
-
-
-        **2. O sistema continua monitorando**
-
-        Enquanto permanecer:
-
-        Ticket 10130 → Thiago
-
-        nenhuma nova informação é gravada.
-
-
-        **3. O técnico muda**
-
-        Se a API passar a informar:
-
-        Ticket 10130 → Gabriel
-
-        o sistema entende que houve alteração de responsável.
-
-
-        **4. Somente nesse momento é criado o registro**
-
-        O banco recebe:
-
-        Ticket: 10130
-
-        Cliente: 36202346487953
-
-        Técnico anterior: Thiago
-
-        Técnico atual: Gabriel
-
-        Data/Hora: momento em que a alteração foi detectada.
-
-
-        **5. O estado temporário é atualizado**
-
-        Depois da transferência:
-
-        Ticket 10130 → Gabriel
-
-        Assim, se continuar com Gabriel, não haverá novos
-        registros.
-
-
-        **6. Se posteriormente mudar novamente**
-
-        Exemplo:
-
-        Gabriel → Ramon
-
-        será criado outro registro:
-
-        Técnico anterior: Gabriel
-
-        Técnico atual: Ramon
-
-
-        Dessa forma o banco principal contém somente eventos
-        relevantes para auditoria.
-        """
-    )
