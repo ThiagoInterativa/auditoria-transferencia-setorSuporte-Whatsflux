@@ -1,4 +1,3 @@
-monitor_auditoria.py
 import streamlit as st
 import requests
 import sqlite3
