@@ -1667,6 +1667,111 @@ def painel_monitoramento():
                 "Nenhum atendimento com técnico está sendo monitorado."
             )
 
+# ============================================================
+# CONSULTA DA AUDITORIA
+# ============================================================
+
+st.divider()
+
+st.header("📊 Histórico de Transferências")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+
+    data_inicio_auditoria = st.date_input(
+        "Data inicial",
+        value=date.today(),
+        key="auditoria_data_inicio"
+    )
+
+with col2:
+
+    data_fim_auditoria = st.date_input(
+        "Data final",
+        value=date.today(),
+        key="auditoria_data_fim"
+    )
+
+with col3:
+
+    tecnicos = ["Todos"] + listar_tecnicos_auditoria()
+
+    tecnico_filtro = st.selectbox(
+        "Técnico",
+        tecnicos,
+        key="auditoria_tecnico"
+    )
+
+
+# ============================================================
+# CONSULTAR
+# ============================================================
+
+df_auditoria = consultar_auditoria(
+    data_inicial=data_inicio_auditoria,
+    data_final=data_fim_auditoria,
+    tecnico=tecnico_filtro
+)
+
+
+# ============================================================
+# RESULTADOS
+# ============================================================
+
+if df_auditoria.empty:
+
+    st.info(
+        "Nenhuma transferência encontrada no período selecionado."
+    )
+
+else:
+
+    st.success(
+        f"{len(df_auditoria)} transferência(s) encontrada(s)."
+    )
+
+
+    # Formata data para exibição
+    df_exibicao = df_auditoria.copy()
+
+    if "data_hora" in df_exibicao.columns:
+
+        df_exibicao["data_hora"] = (
+            pd.to_datetime(
+                df_exibicao["data_hora"],
+                errors="coerce"
+            )
+            .dt.strftime("%d/%m/%Y %H:%M:%S")
+        )
+
+
+    st.dataframe(
+        df_exibicao,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    # ========================================================
+    # CSV
+    # ========================================================
+
+    csv = gerar_csv(df_auditoria)
+
+
+    st.download_button(
+        label="⬇️ Baixar auditoria em CSV",
+        data=csv,
+        file_name=(
+            f"auditoria_transferencias_"
+            f"{data_inicio_auditoria.strftime('%Y%m%d')}_"
+            f"{data_fim_auditoria.strftime('%Y%m%d')}.csv"
+        ),
+        mime="text/csv",
+        use_container_width=False
+    )
+
 
 # ============================================================
 # EXECUTA O MONITORAMENTO
