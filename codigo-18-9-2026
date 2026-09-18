@@ -1120,20 +1120,76 @@ def excluir_auditoria_periodo(
 
     return removidos
 
-
 # ============================================================
-# CSV
+# GERAR CSV DA AUDITORIA
 # ============================================================
 
 def gerar_csv(df):
+    """
+    Gera o arquivo CSV da auditoria.
 
-    if df.empty:
+    IMPORTANTE:
+    Mesmo que o DataFrame esteja vazio, o CSV será criado
+    contendo os nomes das colunas.
 
-        return b""
+    Isso permite testar o formato do relatório antes de
+    existirem transferências registradas.
+    """
 
+    # --------------------------------------------------------
+    # Define as colunas oficiais do relatório.
+    #
+    # Dessa forma, mesmo com ZERO registros, o CSV terá
+    # exatamente estas colunas.
+    # --------------------------------------------------------
+
+    colunas = [
+        "id",
+        "ticket_id",
+        "ticket_uuid",
+        "contact_id",
+        "cliente",
+        "telefone",
+        "tecnico_anterior_id",
+        "tecnico_anterior",
+        "tecnico_atual_id",
+        "tecnico_atual",
+        "evento",
+        "data_hora"
+    ]
+
+    # --------------------------------------------------------
+    # Se não houver dados, cria um DataFrame vazio
+    # mantendo as colunas do relatório.
+    # --------------------------------------------------------
+
+    if df is None or df.empty:
+
+        df = pd.DataFrame(columns=colunas)
+
+    else:
+
+        # ----------------------------------------------------
+        # Garante que todas as colunas existam.
+        # ----------------------------------------------------
+
+        for coluna in colunas:
+
+            if coluna not in df.columns:
+
+                df[coluna] = ""
+
+        # ----------------------------------------------------
+        # Mantém as colunas na ordem correta.
+        # ----------------------------------------------------
+
+        df = df[colunas]
+
+    # --------------------------------------------------------
+    # Cria o arquivo em memória.
+    # --------------------------------------------------------
 
     buffer = io.StringIO()
-
 
     df.to_csv(
         buffer,
@@ -1142,9 +1198,7 @@ def gerar_csv(df):
         encoding="utf-8-sig"
     )
 
-
     return buffer.getvalue().encode("utf-8-sig")
-
 
 # ============================================================
 # INICIALIZAÇÃO
@@ -1668,6 +1722,112 @@ def painel_monitoramento():
                 "Nenhum atendimento com técnico está sendo monitorado."
             )
 
+    # ========================================================
+    # EXPORTAÇÃO DA AUDITORIA
+    # ========================================================
+
+    st.write("")
+
+    st.subheader("📄 Exportar auditoria")
+
+    st.caption(
+        "Exporte as transferências registradas no banco de auditoria. "
+        "Mesmo sem registros, é possível gerar um CSV de teste "
+        "contendo apenas os cabeçalhos."
+    )
+
+    # --------------------------------------------------------
+    # Datas padrão do relatório
+    # --------------------------------------------------------
+
+    col_csv1, col_csv2 = st.columns(2)
+
+    with col_csv1:
+
+        data_csv_inicial = st.date_input(
+            "Data inicial",
+            value=date.today() - timedelta(days=30),
+            key="data_csv_inicial"
+        )
+
+    with col_csv2:
+
+        data_csv_final = st.date_input(
+            "Data final",
+            value=date.today(),
+            key="data_csv_final"
+        )
+
+    # --------------------------------------------------------
+    # Validação das datas
+    # --------------------------------------------------------
+
+    if data_csv_inicial > data_csv_final:
+
+        st.error(
+            "❌ A data inicial não pode ser maior que a data final."
+        )
+
+    else:
+
+        # ----------------------------------------------------
+        # Consulta a auditoria
+        # ----------------------------------------------------
+
+        df_csv = consultar_auditoria(
+            data_inicial=data_csv_inicial,
+            data_final=data_csv_final,
+            tecnico="Todos"
+        )
+
+        # ----------------------------------------------------
+        # Quantidade encontrada
+        # ----------------------------------------------------
+
+        if df_csv.empty:
+
+            st.info(
+                "ℹ️ Nenhuma transferência encontrada no período. "
+                "O CSV de teste conterá apenas os cabeçalhos."
+            )
+
+        else:
+
+            st.success(
+                f"✅ {len(df_csv)} transferência(s) "
+                f"encontrada(s) no período."
+            )
+
+        # ----------------------------------------------------
+        # Gera o CSV.
+        #
+        # A função gerar_csv() foi preparada para funcionar
+        # inclusive quando df_csv estiver vazio.
+        # ----------------------------------------------------
+
+        arquivo_csv = gerar_csv(df_csv)
+
+        # ----------------------------------------------------
+        # Nome do arquivo
+        # ----------------------------------------------------
+
+        nome_arquivo = (
+            f"auditoria_transferencias_"
+            f"{data_csv_inicial.strftime('%Y%m%d')}_"
+            f"{data_csv_final.strftime('%Y%m%d')}.csv"
+        )
+
+        # ----------------------------------------------------
+        # Botão de download
+        # ----------------------------------------------------
+
+        st.download_button(
+            label="📥 Baixar CSV da auditoria",
+            data=arquivo_csv,
+            file_name=nome_arquivo,
+            mime="text/csv",
+            use_container_width=True
+        )
 
 # ============================================================
 # EXECUTA O MONITORAMENTO
