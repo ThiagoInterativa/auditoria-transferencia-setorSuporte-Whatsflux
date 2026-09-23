@@ -735,53 +735,64 @@ def processar_ticket(
 # EXECUTAR UM CICLO DE MONITORAMENTO
 # ============================================================
 
+# ============================================================
+# EXECUTAR UM CICLO DE MONITORAMENTO (CORRIGIDO)
+# ============================================================
+
 def executar_monitoramento(session):
 
     estado = carregar_estado_temporario()
 
+    # Busca todos os tickets atualmente abertos na API
     tickets = buscar_tickets_abertos(session)
 
     transferencias = []
-
     entradas = 0
 
-    ignorados = 0
-
-
-    # IDs atualmente abertos
+    # IDs atualmente abertos na API do WhatsFlux
     ids_abertos = set()
-
-
     for ticket in tickets:
-
         ticket_id = ticket.get("id")
-
         if ticket_id:
-
             ids_abertos.add(str(ticket_id))
 
-
-        resultado = processar_ticket(
-            ticket,
-            estado
-        )
-
+    # 1. PROCESSA OS TICKETS QUE ESTÃO ABERTOS
+    for ticket in tickets:
+        resultado = processar_ticket(ticket, estado)
 
         if not resultado:
-
             continue
 
-
         if resultado["tipo"] == "ENTRADA_MONITORAMENTO":
-
             entradas += 1
 
-
         elif resultado["tipo"] == "TRANSFERENCIA":
-
             transferencias.append(resultado)
 
+    # 2. REMOVE DO ESTADO TEMPORÁRIO OS TICKETS QUE FORAM FECHADOS
+    # Se o ticket estava no nosso JSON mas NÃO está mais na lista de abertos da API,
+    # significa que o atendimento foi finalizado/fechado.
+    chaves_para_remover = []
+    for chave_ticket in list(estado.keys()):
+        if chave_ticket not in ids_abertos:
+            chaves_para_remover.append(chave_ticket)
 
+    for chave_ticket in chaves_para_remover:
+        estado.pop(chave_ticket, None)
+
+    # ========================================================
+    # SALVA O ESTADO ATUALIZADO
+    # ========================================================
+    salvar_estado_temporario(estado)
+
+    return {
+        "tickets_abertos": len(tickets),
+        "ids_abertos": ids_abertos,
+        "estado": estado,
+        "entradas": entradas,
+        "transferencias": transferencias
+    }
+    
     # ========================================================
     # SALVA O ESTADO
     # ========================================================
