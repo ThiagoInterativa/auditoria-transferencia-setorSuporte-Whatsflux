@@ -102,6 +102,36 @@ st.markdown("""
     font-size: 13px;
 }
 
+
+/* ========================================================
+   AUDITORIA
+   ======================================================== */
+
+.audit-header {
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.audit-actions {
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.audit-confirmation {
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.audit-info {
+    color: #64748b;
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -375,7 +405,6 @@ def gravar_transferencia(
     conn.commit()
     conn.close()
 
-
 # ============================================================
 # LOGIN WHATSFLUX
 # ============================================================
@@ -449,10 +478,6 @@ def criar_sessao_whatsflux():
             })
 
         else:
-
-            # Algumas APIs podem usar cookie de sessão.
-            # Nesse caso a própria Session continuará carregando
-            # os cookies recebidos.
 
             if not session.cookies:
 
@@ -555,8 +580,6 @@ def buscar_tickets_abertos(session):
         page_number += 1
 
 
-        # Segurança contra alguma API que fique retornando
-        # hasMore=true indefinidamente.
         if page_number > 100:
 
             break
@@ -573,15 +596,6 @@ def processar_ticket(
     ticket,
     estado
 ):
-    """
-    Regra principal:
-
-    1. Sem técnico -> ignora.
-    2. Primeira vez com técnico -> apenas coloca no estado temporário.
-    3. Mesmo técnico -> não faz nada.
-    4. Técnico diferente -> grava TRANSFERENCIA.
-    5. Atualiza o estado temporário.
-    """
 
     ticket_id = ticket.get("id")
 
@@ -593,10 +607,6 @@ def processar_ticket(
 
     user_id = ticket.get("userId")
 
-
-    # ========================================================
-    # ATENDIMENTO SEM TÉCNICO
-    # ========================================================
 
     if not user or not user_id:
 
@@ -618,10 +628,6 @@ def processar_ticket(
         or ""
     )
 
-
-    # ========================================================
-    # DADOS ATUAIS
-    # ========================================================
 
     dados_atuais = {
 
@@ -646,10 +652,6 @@ def processar_ticket(
     chave = str(ticket_id)
 
 
-    # ========================================================
-    # PRIMEIRA VEZ
-    # ========================================================
-
     if chave not in estado:
 
         estado[chave] = dados_atuais
@@ -669,14 +671,7 @@ def processar_ticket(
     tecnico_anterior = anterior.get("tecnico")
 
 
-    # ========================================================
-    # MESMO TÉCNICO
-    # ========================================================
-
     if str(tecnico_anterior_id) == str(user_id):
-
-        # Atualizamos somente informações auxiliares.
-        # Não criamos evento de auditoria.
 
         estado[chave] = {
             **anterior,
@@ -697,10 +692,6 @@ def processar_ticket(
         return None
 
 
-    # ========================================================
-    # TÉCNICO MUDOU
-    # ========================================================
-
     gravar_transferencia(
         ticket=ticket,
 
@@ -714,7 +705,6 @@ def processar_ticket(
     )
 
 
-    # Atualiza o estado para a nova situação.
     estado[chave] = dados_atuais
 
 
@@ -735,64 +725,80 @@ def processar_ticket(
 # EXECUTAR UM CICLO DE MONITORAMENTO
 # ============================================================
 
-# ============================================================
-# EXECUTAR UM CICLO DE MONITORAMENTO (CORRIGIDO)
-# ============================================================
-
 def executar_monitoramento(session):
 
     estado = carregar_estado_temporario()
 
-    # Busca todos os tickets atualmente abertos na API
     tickets = buscar_tickets_abertos(session)
 
     transferencias = []
     entradas = 0
 
-    # IDs atualmente abertos na API do WhatsFlux
+
     ids_abertos = set()
+
     for ticket in tickets:
+
         ticket_id = ticket.get("id")
+
         if ticket_id:
             ids_abertos.add(str(ticket_id))
 
-    # 1. PROCESSA OS TICKETS QUE ESTÃO ABERTOS
+
     for ticket in tickets:
-        resultado = processar_ticket(ticket, estado)
+
+        resultado = processar_ticket(
+            ticket,
+            estado
+        )
 
         if not resultado:
             continue
 
+
         if resultado["tipo"] == "ENTRADA_MONITORAMENTO":
+
             entradas += 1
 
+
         elif resultado["tipo"] == "TRANSFERENCIA":
+
             transferencias.append(resultado)
 
-    # 2. REMOVE DO ESTADO TEMPORÁRIO OS TICKETS QUE FORAM FECHADOS
-    # Se o ticket estava no nosso JSON mas NÃO está mais na lista de abertos da API,
-    # significa que o atendimento foi finalizado/fechado.
+
     chaves_para_remover = []
+
     for chave_ticket in list(estado.keys()):
+
         if chave_ticket not in ids_abertos:
+
             chaves_para_remover.append(chave_ticket)
 
-    for chave_ticket in chaves_para_remover:
-        estado.pop(chave_ticket, None)
 
-    # ========================================================
-    # SALVA O ESTADO ATUALIZADO
-    # ========================================================
+    for chave_ticket in chaves_para_remover:
+
+        estado.pop(
+            chave_ticket,
+            None
+        )
+
+
     salvar_estado_temporario(estado)
+
 
     return {
         "tickets_abertos": len(tickets),
+
         "ids_abertos": ids_abertos,
+
         "estado": estado,
+
         "entradas": entradas,
+
         "transferencias": transferencias
     }
-    
+
+
 # ============================================================
 # AUDITORIA - CONSULTA
 # ============================================================
@@ -804,6 +810,7 @@ def consultar_auditoria(
 ):
 
     inicio = data_inicio(data_inicial).isoformat()
+
     fim = data_fim(data_final).isoformat()
 
 
@@ -943,7 +950,10 @@ def data_estado(item):
         dt = datetime.fromisoformat(valor)
 
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=TZ)
+
+            dt = dt.replace(
+                tzinfo=TZ
+            )
 
         return dt
 
@@ -964,6 +974,7 @@ def encontrar_estados_abertos_no_periodo(
 ):
 
     inicio = data_inicio(data_inicial)
+
     fim = data_fim(data_final)
 
     encontrados = []
@@ -977,7 +988,6 @@ def encontrar_estados_abertos_no_periodo(
             continue
 
 
-        # O registro pertence ao período selecionado?
         dentro_periodo = (
             inicio <= dt <= fim
         )
@@ -987,7 +997,6 @@ def encontrar_estados_abertos_no_periodo(
             continue
 
 
-        # E o ticket ainda está aberto?
         if str(chave) in ids_abertos:
 
             encontrados.append(item)
@@ -1010,6 +1019,7 @@ def limpar_estado_temporario(
     estado = carregar_estado_temporario()
 
     inicio = data_inicio(data_inicial)
+
     fim = data_fim(data_final)
 
 
@@ -1039,10 +1049,6 @@ def limpar_estado_temporario(
             candidatos.append(chave)
 
 
-    # --------------------------------------------------------
-    # Segurança
-    # --------------------------------------------------------
-
     if abertos_no_periodo and not confirmar:
 
         return {
@@ -1054,13 +1060,12 @@ def limpar_estado_temporario(
         }
 
 
-    # --------------------------------------------------------
-    # Exclusão
-    # --------------------------------------------------------
-
     for chave in candidatos:
 
-        estado.pop(chave, None)
+        estado.pop(
+            chave,
+            None
+        )
 
 
     salvar_estado_temporario(estado)
@@ -1076,7 +1081,7 @@ def limpar_estado_temporario(
 
 
 # ============================================================
-# EXCLUIR AUDITORIA
+# EXCLUIR AUDITORIA - PERÍODO
 # ============================================================
 
 def excluir_auditoria_periodo(
@@ -1084,8 +1089,13 @@ def excluir_auditoria_periodo(
     data_final
 ):
 
-    inicio = data_inicio(data_inicial).isoformat()
-    fim = data_fim(data_final).isoformat()
+    inicio = data_inicio(
+        data_inicial
+    ).isoformat()
+
+    fim = data_fim(
+        data_final
+    ).isoformat()
 
 
     conn = conectar_banco()
@@ -1111,13 +1121,17 @@ def excluir_auditoria_periodo(
 
     return removidos
 
+
 # ============================================================
-# EXCLUIR UM REGISTRO ESPECÍFICO DA AUDITORIA
+# EXCLUIR UM REGISTRO ESPECÍFICO
 # ============================================================
 
-def excluir_auditoria_registro(registro_id):
+def excluir_auditoria_registro(
+    registro_id
+):
 
     conn = conectar_banco()
+
 
     cursor = conn.execute("""
         DELETE FROM auditoria
@@ -1126,36 +1140,60 @@ def excluir_auditoria_registro(registro_id):
         registro_id,
     ))
 
+
     removido = cursor.rowcount
 
     conn.commit()
+
     conn.close()
+
 
     return removido
 
+
+# ============================================================
+# EXCLUIR VÁRIOS REGISTROS ESPECÍFICOS
+# ============================================================
+
+def excluir_auditoria_registros(
+    registro_ids
+):
+
+    if not registro_ids:
+        return 0
+
+
+    conn = conectar_banco()
+
+
+    placeholders = ",".join(
+        ["?"] * len(registro_ids)
+    )
+
+
+    cursor = conn.execute(
+        f"""
+        DELETE FROM auditoria
+        WHERE id IN ({placeholders})
+        """,
+        tuple(registro_ids)
+    )
+
+
+    removidos = cursor.rowcount
+
+    conn.commit()
+
+    conn.close()
+
+
+    return removidos
 
 # ============================================================
 # GERAR CSV DA AUDITORIA
 # ============================================================
 
 def gerar_csv(df):
-    """
-    Gera o arquivo CSV da auditoria.
-
-    IMPORTANTE:
-    Mesmo que o DataFrame esteja vazio, o CSV será criado
-    contendo os nomes das colunas.
-
-    Isso permite testar o formato do relatório antes de
-    existirem transferências registradas.
-    """
-
-    # --------------------------------------------------------
-    # Define as colunas oficiais do relatório.
-    #
-    # Dessa forma, mesmo com ZERO registros, o CSV terá
-    # exatamente estas colunas.
-    # --------------------------------------------------------
 
     colunas = [
         "id",
@@ -1172,20 +1210,14 @@ def gerar_csv(df):
         "data_hora"
     ]
 
-    # --------------------------------------------------------
-    # Se não houver dados, cria um DataFrame vazio
-    # mantendo as colunas do relatório.
-    # --------------------------------------------------------
 
     if df is None or df.empty:
 
-        df = pd.DataFrame(columns=colunas)
+        df = pd.DataFrame(
+            columns=colunas
+        )
 
     else:
-
-        # ----------------------------------------------------
-        # Garante que todas as colunas existam.
-        # ----------------------------------------------------
 
         for coluna in colunas:
 
@@ -1193,17 +1225,12 @@ def gerar_csv(df):
 
                 df[coluna] = ""
 
-        # ----------------------------------------------------
-        # Mantém as colunas na ordem correta.
-        # ----------------------------------------------------
 
         df = df[colunas]
 
-    # --------------------------------------------------------
-    # Cria o arquivo em memória.
-    # --------------------------------------------------------
 
     buffer = io.StringIO()
+
 
     df.to_csv(
         buffer,
@@ -1212,7 +1239,11 @@ def gerar_csv(df):
         encoding="utf-8-sig"
     )
 
-    return buffer.getvalue().encode("utf-8-sig")
+
+    return buffer.getvalue().encode(
+        "utf-8-sig"
+    )
+
 
 # ============================================================
 # INICIALIZAÇÃO
@@ -1264,6 +1295,20 @@ if "confirmar_exclusao_auditoria" not in st.session_state:
 if "limpeza_temp_resultado" not in st.session_state:
 
     st.session_state.limpeza_temp_resultado = None
+
+
+# NOVO:
+# Guarda os IDs que o usuário selecionou para exclusão.
+if "auditoria_selecionados" not in st.session_state:
+
+    st.session_state.auditoria_selecionados = []
+
+
+# NOVO:
+# Controle da confirmação de exclusão.
+if "confirmar_exclusao_auditoria_selecionados" not in st.session_state:
+
+    st.session_state.confirmar_exclusao_auditoria_selecionados = False
 
 
 # ============================================================
@@ -1326,21 +1371,28 @@ st.sidebar.write(
 
 if st.session_state.monitorando:
 
-    st.sidebar.success("🟢 Monitoramento ativo")
+    st.sidebar.success(
+        "🟢 Monitoramento ativo"
+    )
 
 else:
 
-    st.sidebar.warning("⏸️ Monitoramento pausado")
+    st.sidebar.warning(
+        "⏸️ Monitoramento pausado"
+    )
 
 
 st.sidebar.divider()
 
+
 st.sidebar.subheader("🧹 Limpeza")
+
 
 st.sidebar.caption(
     "Remove registros antigos do estado temporário. "
     "Atendimentos que ainda estão abertos são preservados."
 )
+
 
 data_limpeza = st.sidebar.date_input(
     "Limpar estado entre:",
@@ -1348,11 +1400,13 @@ data_limpeza = st.sidebar.date_input(
     key="data_limpeza_temp"
 )
 
+
 data_limpeza_fim = st.sidebar.date_input(
     "e:",
     value=date.today(),
     key="data_limpeza_temp_fim"
 )
+
 
 if st.sidebar.button(
     "🧹 Limpar estado temporário",
@@ -1361,18 +1415,20 @@ if st.sidebar.button(
 
     estado_atual = carregar_estado_temporario()
 
-    # Busca os tickets que estão abertos neste momento
+
     try:
 
         tickets_abertos = buscar_tickets_abertos(
             st.session_state.whats_session
         )
 
+
         ids_abertos = {
             str(t.get("id"))
             for t in tickets_abertos
             if t.get("id")
         }
+
 
     except Exception as e:
 
@@ -1398,6 +1454,7 @@ if st.sidebar.button(
             f"registros temporários removidos."
         )
 
+
         if resultado_limpeza["abertos"] > 0:
 
             st.sidebar.info(
@@ -1406,15 +1463,17 @@ if st.sidebar.button(
             )
 
 
-
 # ============================================================
 # TÍTULO
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">🔎 Auditoria de Transferências WhatsFlux</div>',
+    '<div class="main-title">'
+    '🔎 Auditoria de Transferências WhatsFlux'
+    '</div>',
     unsafe_allow_html=True
 )
+
 
 st.markdown(
     '<div class="subtitle">'
@@ -1432,10 +1491,13 @@ if st.session_state.whats_session is None:
 
     session, mensagem = criar_sessao_whatsflux()
 
+
     if session:
 
         st.session_state.whats_session = session
+
         st.session_state.login_status = "OK"
+
 
     else:
 
@@ -1450,38 +1512,53 @@ if st.session_state.whats_session is None:
 
     st.stop()
 
+
 # ============================================================
 # FRAGMENTO DE MONITORAMENTO
 # ============================================================
 
-run_every = intervalo if st.session_state.monitorando else None
+run_every = (
+    intervalo
+    if st.session_state.monitorando
+    else None
+)
 
 
-@st.fragment(run_every=run_every, key="monitor_whatsflux")
+@st.fragment(
+    run_every=run_every,
+    key="monitor_whatsflux"
+)
 def painel_monitoramento():
 
     session = st.session_state.whats_session
 
-    # --------------------------------------------------------
-    # Executa monitoramento
-    # --------------------------------------------------------
+
+    # ========================================================
+    # EXECUTA MONITORAMENTO
+    # ========================================================
 
     try:
 
-        resultado = executar_monitoramento(session)
+        resultado = executar_monitoramento(
+            session
+        )
+
 
         st.session_state.total_ciclos += 1
+
         st.session_state.ultima_execucao = agora()
+
 
         st.session_state.ultima_transferencias = (
             resultado.get("transferencias", [])
         )
 
-        # ----------------------------------------------------
-        # Se encontrou transferências
-        # ----------------------------------------------------
 
-        transferencias = resultado.get("transferencias", [])
+        transferencias = resultado.get(
+            "transferencias",
+            []
+        )
+
 
         if transferencias:
 
@@ -1497,6 +1574,7 @@ def painel_monitoramento():
                     icon="🔎"
                 )
 
+
     except Exception as e:
 
         st.error(
@@ -1510,17 +1588,23 @@ def painel_monitoramento():
     # INDICADORES
     # ========================================================
 
-    estado = resultado.get("estado", {})
+    estado = resultado.get(
+        "estado",
+        {}
+    )
+
 
     tickets_abertos = resultado.get(
         "tickets_abertos",
         0
     )
 
+
     entradas = resultado.get(
         "entradas",
         0
     )
+
 
     transferencias = resultado.get(
         "transferencias",
@@ -1608,6 +1692,7 @@ def painel_monitoramento():
 
     ultima = st.session_state.ultima_execucao
 
+
     if ultima:
 
         horario = ultima.strftime(
@@ -1623,8 +1708,10 @@ def painel_monitoramento():
         f"""
         <div class="small-info">
             🟢 Monitoramento ativo |
-            Última consulta: <strong>{horario}</strong> |
-            Ciclos executados: <strong>{st.session_state.total_ciclos}</strong>
+            Última consulta:
+            <strong>{horario}</strong> |
+            Ciclos executados:
+            <strong>{st.session_state.total_ciclos}</strong>
         </div>
         """,
         unsafe_allow_html=True
@@ -1632,12 +1719,13 @@ def painel_monitoramento():
 
 
     # ========================================================
-    # TRANSFERÊNCIAS DETECTADAS NESTE CICLO
+    # TRANSFERÊNCIAS DETECTADAS
     # ========================================================
 
     if transferencias:
 
         st.write("")
+
 
         st.subheader(
             "🔄 Transferências detectadas neste ciclo"
@@ -1688,9 +1776,6 @@ def painel_monitoramento():
 
 
     # ========================================================
-    # ESTADO ATUAL DOS ATENDIMENTOS
-    # ========================================================
-    # ========================================================
     # ABAS
     # ========================================================
 
@@ -1701,7 +1786,7 @@ def painel_monitoramento():
 
 
     # ========================================================
-    # ABA 1 - ATENDIMENTOS ATUALMENTE MONITORADOS
+    # ABA 1
     # ========================================================
 
     with aba_monitoramento:
@@ -1710,26 +1795,39 @@ def painel_monitoramento():
 
             linhas = []
 
+
             for item in estado.values():
 
                 linhas.append({
 
-                    "Ticket": item.get("ticket_id"),
+                    "Ticket": item.get(
+                        "ticket_id"
+                    ),
 
-                    "Cliente": item.get("cliente"),
+                    "Cliente": item.get(
+                        "cliente"
+                    ),
 
-                    "Telefone": item.get("telefone"),
+                    "Telefone": item.get(
+                        "telefone"
+                    ),
 
-                    "Técnico": item.get("tecnico"),
+                    "Técnico": item.get(
+                        "tecnico"
+                    ),
 
                     "Detectado em": formatar_data_hora(
-                        item.get("detectado_em")
+                        item.get(
+                            "detectado_em"
+                        )
                     )
 
                 })
 
 
-            df_estado = pd.DataFrame(linhas)
+            df_estado = pd.DataFrame(
+                linhas
+            )
 
 
             if not df_estado.empty:
@@ -1743,9 +1841,9 @@ def painel_monitoramento():
         else:
 
             st.info(
-                "Nenhum atendimento com técnico está sendo monitorado."
+                "Nenhum atendimento com técnico "
+                "está sendo monitorado."
             )
-
 
     # ========================================================
     # ABA 2 - VISUALIZAR AUDITORIA
@@ -1753,13 +1851,24 @@ def painel_monitoramento():
 
     with aba_auditoria:
 
-        st.subheader("🔎 Visualizar auditoria")
+        # ----------------------------------------------------
+        # TÍTULO
+        # ----------------------------------------------------
+
+        st.markdown(
+            '<div class="audit-header">'
+            '<h3>🔎 Visualizar auditoria</h3>'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
 
         # ----------------------------------------------------
         # FILTRO POR PERÍODO
         # ----------------------------------------------------
 
         col_auditoria_data1, col_auditoria_data2 = st.columns(2)
+
 
         with col_auditoria_data1:
 
@@ -1768,6 +1877,7 @@ def painel_monitoramento():
                 value=date.today() - timedelta(days=30),
                 key="data_auditoria_inicial"
             )
+
 
         with col_auditoria_data2:
 
@@ -1779,19 +1889,20 @@ def painel_monitoramento():
 
 
         # ----------------------------------------------------
-        # VALIDAÇÃO DAS DATAS
+        # VALIDAÇÃO
         # ----------------------------------------------------
 
         if data_auditoria_inicial > data_auditoria_final:
 
             st.error(
-                "❌ A data inicial não pode ser maior que a data final."
+                "❌ A data inicial não pode ser maior "
+                "que a data final."
             )
 
         else:
 
             # ------------------------------------------------
-            # CONSULTA O BANCO DE AUDITORIA
+            # CONSULTA
             # ------------------------------------------------
 
             df_auditoria = consultar_auditoria(
@@ -1807,172 +1918,507 @@ def painel_monitoramento():
 
             if df_auditoria.empty:
 
+                # Limpa seleção anterior caso não haja dados.
+                st.session_state.auditoria_selecionados = []
+
                 st.info(
                     "ℹ️ Nenhum registro de auditoria encontrado "
                     "no período selecionado."
                 )
 
+
             else:
 
-                st.success(
-                    f"✅ {len(df_auditoria)} registro(s) "
-                    f"encontrado(s)."
+                # ------------------------------------------------
+                # INFORMAÇÃO COMPACTA
+                # ------------------------------------------------
+
+                st.markdown(
+                    f"""
+                    <div class="audit-info">
+                        {len(df_auditoria)}
+                        registro(s) encontrado(s).
+                        Selecione os registros diretamente na tabela
+                        para excluir.
+                    </div>
+                    """,
+                    unsafe_allow_html=True
                 )
 
 
-                # --------------------------------------------
-                # CABEÇALHO
-                # --------------------------------------------
+                # ------------------------------------------------
+                # PREPARA A TABELA VISUAL
+                #
+                # Mantemos o ID internamente para saber exatamente
+                # qual registro será excluído.
+                # ------------------------------------------------
 
-                col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([
-                    1.0,
-                    1.6,
-                    1.4,
+                df_tabela = pd.DataFrame({
+
+                    "id": df_auditoria["id"],
+
+                    "Ticket": (
+                        "#"
+                        + df_auditoria["ticket_id"]
+                        .astype(str)
+                    ),
+
+                    "Cliente": (
+                        df_auditoria["cliente"]
+                        .fillna("")
+                    ),
+
+                    "Anterior": (
+                        df_auditoria["tecnico_anterior"]
+                        .fillna("-")
+                    ),
+
+                    "Atual": (
+                        df_auditoria["tecnico_atual"]
+                        .fillna("-")
+                    ),
+
+                    "Data/Hora": (
+                        df_auditoria["data_hora"]
+                        .apply(formatar_data_hora)
+                    )
+
+                })
+
+
+                # ------------------------------------------------
+                # DATAFRAME EDITÁVEL
+                #
+                # A única coluna editável é "Selecionar".
+                # O restante fica bloqueado.
+                # ------------------------------------------------
+
+                df_tabela["Selecionar"] = False
+
+
+                # Ordem visual:
+                #
+                # Selecionar | Ticket | Cliente | Anterior |
+                # Atual | Data/Hora
+                # ------------------------------------------------
+
+                df_tabela = df_tabela[
+                    [
+                        "Selecionar",
+                        "Ticket",
+                        "Cliente",
+                        "Anterior",
+                        "Atual",
+                        "Data/Hora",
+                        "id"
+                    ]
+                ]
+
+
+                # ------------------------------------------------
+                # CONFIGURAÇÃO VISUAL DAS COLUNAS
+                # ------------------------------------------------
+
+                configuracao_colunas = {
+
+                    "Selecionar": st.column_config.CheckboxColumn(
+                        "✓",
+                        help="Marque para selecionar o registro.",
+                        default=False
+                    ),
+
+                    "Ticket": st.column_config.TextColumn(
+                        "Ticket",
+                        width="small"
+                    ),
+
+                    "Cliente": st.column_config.TextColumn(
+                        "Cliente",
+                        width="medium"
+                    ),
+
+                    "Anterior": st.column_config.TextColumn(
+                        "Anterior",
+                        width="medium"
+                    ),
+
+                    "Atual": st.column_config.TextColumn(
+                        "Atual",
+                        width="medium"
+                    ),
+
+                    "Data/Hora": st.column_config.TextColumn(
+                        "Data/Hora",
+                        width="medium"
+                    ),
+
+                    "id": None
+                }
+
+
+                # ------------------------------------------------
+                # TABELA COMPACTA
+                # ------------------------------------------------
+
+                tabela_editada = st.data_editor(
+
+                    df_tabela,
+
+                    column_config=configuracao_colunas,
+
+                    column_order=[
+                        "Selecionar",
+                        "Ticket",
+                        "Cliente",
+                        "Anterior",
+                        "Atual",
+                        "Data/Hora"
+                    ],
+
+                    hide_index=True,
+
+                    use_container_width=True,
+
+                    height=min(
+                        430,
+                        45 + (len(df_tabela) * 35)
+                    ),
+
+                    disabled=[
+                        "Ticket",
+                        "Cliente",
+                        "Anterior",
+                        "Atual",
+                        "Data/Hora",
+                        "id"
+                    ],
+
+                    key="tabela_auditoria"
+
+                )
+
+
+                # ------------------------------------------------
+                # IDENTIFICA OS REGISTROS SELECIONADOS
+                # ------------------------------------------------
+
+                selecionados = tabela_editada[
+                    tabela_editada["Selecionar"] == True
+                ]
+
+
+                ids_selecionados = (
+                    selecionados["id"]
+                    .astype(int)
+                    .tolist()
+                )
+
+
+                st.session_state.auditoria_selecionados = (
+                    ids_selecionados
+                )
+
+
+                # ------------------------------------------------
+                # ÁREA DE AÇÕES
+                # ------------------------------------------------
+
+                st.markdown(
+                    '<div class="audit-actions"></div>',
+                    unsafe_allow_html=True
+                )
+
+
+                quantidade_selecionada = len(
+                    ids_selecionados
+                )
+
+
+                col_acao1, col_acao2, col_acao3 = st.columns([
                     1.5,
                     1.5,
-                    1.5,
-                    1.7,
-                    0.9
+                    5
                 ])
 
 
-                with col1:
-                    st.markdown("**Ticket**")
+                with col_acao1:
 
-                with col2:
-                    st.markdown("**Cliente**")
-
-                with col3:
-                    st.markdown("**Telefone**")
-
-                with col4:
-                    st.markdown("**Técnico Anterior**")
-
-                with col5:
-                    st.markdown("**Novo Técnico**")
-
-                with col6:
-                    st.markdown("**Data / Hora**")
-
-                with col7:
-                    st.markdown("**Evento**")
-
-                with col8:
-                    st.markdown("**Ação**")
-
-
-                st.divider()
-
-
-                # --------------------------------------------
-                # REGISTROS
-                # --------------------------------------------
-
-                for _, registro in df_auditoria.iterrows():
-
-                    registro_id = registro["id"]
-
-                    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([
-                        1.0,
-                        1.6,
-                        1.4,
-                        1.5,
-                        1.5,
-                        1.5,
-                        1.7,
-                        0.9
-                    ])
-
-
-                    with col1:
-
-                        st.write(
-                            f"#{registro['ticket_id']}"
-                        )
-
-
-                    with col2:
-
-                        st.write(
-                            registro["cliente"] or "-"
-                        )
-
-
-                    with col3:
-
-                        st.write(
-                            registro["telefone"] or "-"
-                        )
-
-
-                    with col4:
-
-                        st.write(
-                            registro["tecnico_anterior"] or "-"
-                        )
-
-
-                    with col5:
-
-                        st.write(
-                            registro["tecnico_atual"] or "-"
-                        )
-
-
-                    with col6:
-
-                        st.write(
-                            formatar_data_hora(
-                                registro["data_hora"]
-                            )
-                        )
-
-
-                    with col7:
-
-                        st.write(
-                            registro["evento"] or "-"
-                        )
-
-
-                    with col8:
+                    if quantidade_selecionada > 0:
 
                         if st.button(
-                            "🗑️",
-                            key=f"excluir_auditoria_{registro_id}",
-                            help=f"Excluir registro #{registro_id}"
+                            f"🗑️ Excluir selecionados "
+                            f"({quantidade_selecionada})",
+                            use_container_width=True,
+                            key="btn_excluir_selecionados"
                         ):
 
-                            removido = excluir_auditoria_registro(
-                                registro_id
+                            st.session_state.confirmar_exclusao_auditoria_selecionados = True
+
+                            st.rerun()
+
+
+                    else:
+
+                        st.button(
+                            "🗑️ Excluir selecionados",
+                            disabled=True,
+                            use_container_width=True,
+                            key="btn_excluir_selecionados_disabled"
+                        )
+
+
+                # ------------------------------------------------
+                # EXCLUSÃO INDIVIDUAL
+                # ------------------------------------------------
+
+                with col_acao2:
+
+                    if st.button(
+                        "🗑️ Excluir 1 registro",
+                        disabled=(len(df_auditoria) == 0),
+                        use_container_width=True,
+                        key="btn_exclusao_individual"
+                    ):
+
+                        st.session_state.mostrar_exclusao_individual = True
+
+                        st.rerun()
+
+
+                # ------------------------------------------------
+                # TEXTO AUXILIAR
+                # ------------------------------------------------
+
+                with col_acao3:
+
+                    if quantidade_selecionada > 0:
+
+                        st.caption(
+                            f"{quantidade_selecionada} "
+                            f"registro(s) selecionado(s)."
+                        )
+
+                    else:
+
+                        st.caption(
+                            "Você pode selecionar um ou vários "
+                            "registros na primeira coluna."
+                        )
+
+
+                # =================================================
+                # CONFIRMAÇÃO - EXCLUSÃO MÚLTIPLA
+                # =================================================
+
+                if (
+                    st.session_state
+                    .get(
+                        "confirmar_exclusao_auditoria_selecionados",
+                        False
+                    )
+                ):
+
+                    st.markdown(
+                        """
+                        <div class="audit-confirmation">
+                            <strong>
+                                ⚠️ Confirmar exclusão
+                            </strong>
+                            <br>
+                            Os registros selecionados serão
+                            removidos definitivamente da auditoria.
+                            Essa ação não poderá ser desfeita.
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+
+                    col_conf1, col_conf2 = st.columns(2)
+
+
+                    with col_conf1:
+
+                        if st.button(
+                            "✅ Sim, excluir selecionados",
+                            type="primary",
+                            use_container_width=True,
+                            key="confirmar_exclusao_multiplos"
+                        ):
+
+                            ids_para_excluir = (
+                                st.session_state
+                                .auditoria_selecionados
                             )
+
+
+                            removidos = (
+                                excluir_auditoria_registros(
+                                    ids_para_excluir
+                                )
+                            )
+
+
+                            st.session_state.auditoria_selecionados = []
+
+                            st.session_state.confirmar_exclusao_auditoria_selecionados = False
+
+
+                            st.toast(
+                                f"{removidos} registro(s) "
+                                f"excluído(s).",
+                                icon="🗑️"
+                            )
+
+
+                            st.rerun()
+
+
+                    with col_conf2:
+
+                        if st.button(
+                            "❌ Cancelar",
+                            use_container_width=True,
+                            key="cancelar_exclusao_multiplos"
+                        ):
+
+                            st.session_state.auditoria_selecionados = []
+
+                            st.session_state.confirmar_exclusao_auditoria_selecionados = False
+
+                            st.rerun()
+
+
+                # =================================================
+                # EXCLUSÃO INDIVIDUAL
+                # =================================================
+
+                if st.session_state.get(
+                    "mostrar_exclusao_individual",
+                    False
+                ):
+
+                    st.markdown(
+                        """
+                        <div class="audit-confirmation">
+                            <strong>
+                                🗑️ Exclusão individual
+                            </strong>
+                            <br>
+                            Selecione abaixo o registro que deseja
+                            excluir.
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+
+                    opcoes_individuais = {}
+
+
+                    for _, registro in df_auditoria.iterrows():
+
+                        registro_id = int(
+                            registro["id"]
+                        )
+
+
+                        descricao = (
+                            f"Ticket #{registro['ticket_id']} "
+                            f"| {registro['cliente'] or '-'} "
+                            f"| "
+                            f"{registro['tecnico_anterior'] or '-'} "
+                            f"→ "
+                            f"{registro['tecnico_atual'] or '-'} "
+                            f"| "
+                            f"{formatar_data_hora(registro['data_hora'])}"
+                        )
+
+
+                        opcoes_individuais[
+                            descricao
+                        ] = registro_id
+
+
+                    opcao_escolhida = st.selectbox(
+                        "Registro:",
+                        options=list(
+                            opcoes_individuais.keys()
+                        ),
+                        key="registro_individual_escolhido"
+                    )
+
+
+                    col_ind1, col_ind2 = st.columns(2)
+
+
+                    with col_ind1:
+
+                        if st.button(
+                            "🗑️ Excluir este registro",
+                            type="primary",
+                            use_container_width=True,
+                            key="confirmar_individual"
+                        ):
+
+                            registro_id = (
+                                opcoes_individuais[
+                                    opcao_escolhida
+                                ]
+                            )
+
+
+                            removido = (
+                                excluir_auditoria_registro(
+                                    registro_id
+                                )
+                            )
+
+
+                            st.session_state.mostrar_exclusao_individual = False
+
 
                             if removido:
 
                                 st.toast(
-                                    "Registro de auditoria excluído.",
+                                    "Registro excluído.",
                                     icon="🗑️"
                                 )
-
-                                st.rerun()
 
                             else:
 
                                 st.error(
-                                    "Não foi possível excluir o registro."
+                                    "Não foi possível excluir "
+                                    "o registro."
                                 )
 
 
-                    st.divider()
+                            st.rerun()
 
-    
+
+                    with col_ind2:
+
+                        if st.button(
+                            "❌ Cancelar",
+                            use_container_width=True,
+                            key="cancelar_individual"
+                        ):
+
+                            st.session_state.mostrar_exclusao_individual = False
+
+                            st.rerun()
+
+
     # ========================================================
     # EXPORTAÇÃO DA AUDITORIA
     # ========================================================
 
     st.write("")
 
-    st.subheader("📄 Exportar auditoria")
+    st.subheader(
+        "📄 Exportar auditoria"
+    )
+
 
     st.caption(
         "Exporte as transferências registradas no banco de auditoria. "
@@ -1980,11 +2426,13 @@ def painel_monitoramento():
         "contendo apenas os cabeçalhos."
     )
 
+
     # --------------------------------------------------------
-    # Datas padrão do relatório
+    # DATAS
     # --------------------------------------------------------
 
     col_csv1, col_csv2 = st.columns(2)
+
 
     with col_csv1:
 
@@ -1994,6 +2442,7 @@ def painel_monitoramento():
             key="data_csv_inicial"
         )
 
+
     with col_csv2:
 
         data_csv_final = st.date_input(
@@ -2002,21 +2451,19 @@ def painel_monitoramento():
             key="data_csv_final"
         )
 
+
     # --------------------------------------------------------
-    # Validação das datas
+    # VALIDAÇÃO
     # --------------------------------------------------------
 
     if data_csv_inicial > data_csv_final:
 
         st.error(
-            "❌ A data inicial não pode ser maior que a data final."
+            "❌ A data inicial não pode ser maior "
+            "que a data final."
         )
 
     else:
-
-        # ----------------------------------------------------
-        # Consulta a auditoria
-        # ----------------------------------------------------
 
         df_csv = consultar_auditoria(
             data_inicial=data_csv_inicial,
@@ -2024,15 +2471,13 @@ def painel_monitoramento():
             tecnico="Todos"
         )
 
-        # ----------------------------------------------------
-        # Quantidade encontrada
-        # ----------------------------------------------------
 
         if df_csv.empty:
 
             st.info(
-                "ℹ️ Nenhuma transferência encontrada no período. "
-                "O CSV de teste conterá apenas os cabeçalhos."
+                "ℹ️ Nenhuma transferência encontrada "
+                "no período. O CSV de teste conterá "
+                "apenas os cabeçalhos."
             )
 
         else:
@@ -2042,18 +2487,11 @@ def painel_monitoramento():
                 f"encontrada(s) no período."
             )
 
-        # ----------------------------------------------------
-        # Gera o CSV.
-        #
-        # A função gerar_csv() foi preparada para funcionar
-        # inclusive quando df_csv estiver vazio.
-        # ----------------------------------------------------
 
-        arquivo_csv = gerar_csv(df_csv)
+        arquivo_csv = gerar_csv(
+            df_csv
+        )
 
-        # ----------------------------------------------------
-        # Nome do arquivo
-        # ----------------------------------------------------
 
         nome_arquivo = (
             f"auditoria_transferencias_"
@@ -2061,9 +2499,6 @@ def painel_monitoramento():
             f"{data_csv_final.strftime('%Y%m%d')}.csv"
         )
 
-        # ----------------------------------------------------
-        # Botão de download
-        # ----------------------------------------------------
 
         st.download_button(
             label="📥 Baixar CSV da auditoria",
@@ -2072,6 +2507,7 @@ def painel_monitoramento():
             mime="text/csv",
             use_container_width=True
         )
+
 
 # ============================================================
 # EXECUTA O MONITORAMENTO
