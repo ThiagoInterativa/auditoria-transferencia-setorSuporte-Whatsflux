@@ -102,30 +102,6 @@ st.markdown("""
     font-size: 13px;
 }
 
-/* ==========================================================
-   AUDITORIA
-   ========================================================== */
-
-.audit-card {
-    background: #172033;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    padding: 15px;
-    margin-bottom: 10px;
-}
-
-.audit-title {
-    color: #38bdf8;
-    font-size: 17px;
-    font-weight: 700;
-}
-
-.audit-info {
-    color: #cbd5e1;
-    font-size: 14px;
-    margin-top: 5px;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -190,6 +166,7 @@ def carregar_estado_temporario():
     """
     Carrega o estado atual dos atendimentos monitorados.
 
+    IMPORTANTE:
     Este arquivo NÃO é o banco de auditoria.
 
     Ele serve apenas para o sistema saber:
@@ -252,7 +229,6 @@ def salvar_estado_temporario(estado):
 # ============================================================
 
 def conectar_banco():
-
     conn = sqlite3.connect(
         AUDIT_DB_FILE,
         timeout=30
@@ -401,30 +377,6 @@ def gravar_transferencia(
 
 
 # ============================================================
-# NOVO:
-# EXCLUIR UM ÚNICO REGISTRO DA AUDITORIA
-# ============================================================
-
-def excluir_auditoria_id(auditoria_id):
-
-    conn = conectar_banco()
-
-    cursor = conn.execute("""
-        DELETE FROM auditoria
-        WHERE id = ?
-    """, (
-        auditoria_id,
-    ))
-
-    removido = cursor.rowcount
-
-    conn.commit()
-    conn.close()
-
-    return removido
-
-
-# ============================================================
 # LOGIN WHATSFLUX
 # ============================================================
 
@@ -437,10 +389,8 @@ def criar_sessao_whatsflux():
 
     except Exception:
 
-        return None, (
-            "Configure WHATSFLUX_EMAIL e WHATSFLUX_SENHA "
-            "nos Secrets."
-        )
+        return None, "Configure WHATSFLUX_EMAIL e WHATSFLUX_SENHA nos Secrets."
+
 
     session = requests.Session()
 
@@ -462,6 +412,7 @@ def criar_sessao_whatsflux():
         "Origin": "https://app.whatsflux.com.br"
     })
 
+
     try:
 
         payload = {
@@ -482,12 +433,14 @@ def criar_sessao_whatsflux():
                 f"Falha no login. HTTP {response.status_code}"
             )
 
+
         dados = response.json()
 
         token = (
             dados.get("token")
             or dados.get("access_token")
         )
+
 
         if token:
 
@@ -497,15 +450,20 @@ def criar_sessao_whatsflux():
 
         else:
 
+            # Algumas APIs podem usar cookie de sessão.
+            # Nesse caso a própria Session continuará carregando
+            # os cookies recebidos.
+
             if not session.cookies:
 
                 return (
                     None,
-                    "Login respondeu, mas não foi encontrado "
-                    "token nem cookie."
+                    "Login respondeu, mas não foi encontrado token nem cookie."
                 )
 
+
         return session, "OK"
+
 
     except requests.RequestException as e:
 
@@ -541,6 +499,7 @@ def buscar_tickets_abertos(session):
             "queueIds": f"[{QUEUE_ID}]"
         }
 
+
         try:
 
             response = session.get(
@@ -555,17 +514,20 @@ def buscar_tickets_abertos(session):
                 f"Erro ao consultar tickets: {e}"
             )
 
+
         if response.status_code == 401:
 
             raise RuntimeError(
                 "Sessão expirada ou não autorizada (HTTP 401)."
             )
 
+
         if response.status_code != 200:
 
             raise RuntimeError(
                 f"Erro na API de tickets. HTTP {response.status_code}"
             )
+
 
         try:
 
@@ -577,19 +539,28 @@ def buscar_tickets_abertos(session):
                 "A API de tickets não retornou JSON válido."
             )
 
+
         tickets = dados.get("tickets") or []
 
         todos.extend(tickets)
 
+
         has_more = dados.get("hasMore", False)
 
         if not has_more:
+
             break
+
 
         page_number += 1
 
+
+        # Segurança contra alguma API que fique retornando
+        # hasMore=true indefinidamente.
         if page_number > 100:
+
             break
+
 
     return todos
 
@@ -602,27 +573,42 @@ def processar_ticket(
     ticket,
     estado
 ):
+    """
+    Regra principal:
+
+    1. Sem técnico -> ignora.
+    2. Primeira vez com técnico -> apenas coloca no estado temporário.
+    3. Mesmo técnico -> não faz nada.
+    4. Técnico diferente -> grava TRANSFERENCIA.
+    5. Atualiza o estado temporário.
+    """
 
     ticket_id = ticket.get("id")
 
     if not ticket_id:
         return None
 
+
     user = ticket.get("user")
 
     user_id = ticket.get("userId")
+
 
     # ========================================================
     # ATENDIMENTO SEM TÉCNICO
     # ========================================================
 
     if not user or not user_id:
+
         return None
+
 
     tecnico_atual = user.get("name")
 
     if not tecnico_atual:
+
         return None
+
 
     contato = ticket.get("contact") or {}
 
@@ -631,6 +617,7 @@ def processar_ticket(
         or contato.get("number")
         or ""
     )
+
 
     # ========================================================
     # DADOS ATUAIS
@@ -655,7 +642,9 @@ def processar_ticket(
         "detectado_em": agora_iso()
     }
 
+
     chave = str(ticket_id)
+
 
     # ========================================================
     # PRIMEIRA VEZ
@@ -672,16 +661,22 @@ def processar_ticket(
             "cliente": cliente
         }
 
+
     anterior = estado[chave]
+
 
     tecnico_anterior_id = anterior.get("tecnico_id")
     tecnico_anterior = anterior.get("tecnico")
+
 
     # ========================================================
     # MESMO TÉCNICO
     # ========================================================
 
     if str(tecnico_anterior_id) == str(user_id):
+
+        # Atualizamos somente informações auxiliares.
+        # Não criamos evento de auditoria.
 
         estado[chave] = {
             **anterior,
@@ -701,6 +696,7 @@ def processar_ticket(
 
         return None
 
+
     # ========================================================
     # TÉCNICO MUDOU
     # ========================================================
@@ -717,7 +713,10 @@ def processar_ticket(
         tecnico_atual=tecnico_atual
     )
 
+
+    # Atualiza o estado para a nova situação.
     estado[chave] = dados_atuais
+
 
     return {
         "tipo": "TRANSFERENCIA",
@@ -736,70 +735,72 @@ def processar_ticket(
 # EXECUTAR UM CICLO DE MONITORAMENTO
 # ============================================================
 
+# ============================================================
+# EXECUTAR UM CICLO DE MONITORAMENTO (CORRIGIDO)
+# ============================================================
+
 def executar_monitoramento(session):
 
     estado = carregar_estado_temporario()
 
+    # Busca todos os tickets atualmente abertos na API
     tickets = buscar_tickets_abertos(session)
 
     transferencias = []
     entradas = 0
 
+    # IDs atualmente abertos na API do WhatsFlux
     ids_abertos = set()
-
     for ticket in tickets:
-
         ticket_id = ticket.get("id")
-
         if ticket_id:
             ids_abertos.add(str(ticket_id))
 
-    # ========================================================
-    # PROCESSA TICKETS ABERTOS
-    # ========================================================
-
+    # 1. PROCESSA OS TICKETS QUE ESTÃO ABERTOS
     for ticket in tickets:
-
-        resultado = processar_ticket(
-            ticket,
-            estado
-        )
+        resultado = processar_ticket(ticket, estado)
 
         if not resultado:
             continue
 
         if resultado["tipo"] == "ENTRADA_MONITORAMENTO":
-
             entradas += 1
 
         elif resultado["tipo"] == "TRANSFERENCIA":
-
             transferencias.append(resultado)
 
-    # ========================================================
-    # REMOVE TICKETS FECHADOS DO ESTADO TEMPORÁRIO
-    # ========================================================
-
+    # 2. REMOVE DO ESTADO TEMPORÁRIO OS TICKETS QUE FORAM FECHADOS
+    # Se o ticket estava no nosso JSON mas NÃO está mais na lista de abertos da API,
+    # significa que o atendimento foi finalizado/fechado.
     chaves_para_remover = []
-
     for chave_ticket in list(estado.keys()):
-
         if chave_ticket not in ids_abertos:
-
             chaves_para_remover.append(chave_ticket)
 
     for chave_ticket in chaves_para_remover:
-
         estado.pop(chave_ticket, None)
 
     # ========================================================
-    # SALVA ESTADO
+    # SALVA O ESTADO ATUALIZADO
+    # ========================================================
+    salvar_estado_temporario(estado)
+
+    return {
+        "tickets_abertos": len(tickets),
+        "ids_abertos": ids_abertos,
+        "estado": estado,
+        "entradas": entradas,
+        "transferencias": transferencias
+    }
+    
+    # ========================================================
+    # SALVA O ESTADO
     # ========================================================
 
     salvar_estado_temporario(estado)
 
-    return {
 
+    return {
         "tickets_abertos": len(tickets),
 
         "ids_abertos": ids_abertos,
@@ -823,10 +824,11 @@ def consultar_auditoria(
 ):
 
     inicio = data_inicio(data_inicial).isoformat()
-
     fim = data_fim(data_final).isoformat()
 
+
     conn = conectar_banco()
+
 
     sql = """
         SELECT
@@ -857,6 +859,7 @@ def consultar_auditoria(
         fim
     ]
 
+
     if tecnico and tecnico != "Todos":
 
         sql += """
@@ -871,9 +874,11 @@ def consultar_auditoria(
             tecnico
         ])
 
+
     sql += """
         ORDER BY data_hora DESC
     """
+
 
     df = pd.read_sql_query(
         sql,
@@ -881,7 +886,9 @@ def consultar_auditoria(
         params=params
     )
 
+
     conn.close()
+
 
     return df
 
@@ -893,6 +900,7 @@ def consultar_auditoria(
 def listar_tecnicos_auditoria():
 
     conn = conectar_banco()
+
 
     df = pd.read_sql_query("""
         SELECT tecnico_anterior AS tecnico
@@ -910,10 +918,14 @@ def listar_tecnicos_auditoria():
         ORDER BY tecnico
     """, conn)
 
+
     conn.close()
 
+
     if df.empty:
+
         return []
+
 
     return df["tecnico"].dropna().tolist()
 
@@ -972,10 +984,10 @@ def encontrar_estados_abertos_no_periodo(
 ):
 
     inicio = data_inicio(data_inicial)
-
     fim = data_fim(data_final)
 
     encontrados = []
+
 
     for chave, item in estado.items():
 
@@ -984,16 +996,22 @@ def encontrar_estados_abertos_no_periodo(
         if not dt:
             continue
 
+
+        # O registro pertence ao período selecionado?
         dentro_periodo = (
             inicio <= dt <= fim
         )
 
+
         if not dentro_periodo:
             continue
 
+
+        # E o ticket ainda está aberto?
         if str(chave) in ids_abertos:
 
             encontrados.append(item)
+
 
     return encontrados
 
@@ -1012,12 +1030,13 @@ def limpar_estado_temporario(
     estado = carregar_estado_temporario()
 
     inicio = data_inicio(data_inicial)
-
     fim = data_fim(data_final)
+
 
     candidatos = []
 
     abertos_no_periodo = []
+
 
     for chave, item in estado.items():
 
@@ -1026,8 +1045,10 @@ def limpar_estado_temporario(
         if not dt:
             continue
 
+
         if not (inicio <= dt <= fim):
             continue
+
 
         if str(chave) in ids_abertos:
 
@@ -1037,14 +1058,14 @@ def limpar_estado_temporario(
 
             candidatos.append(chave)
 
-    # ========================================================
-    # SEGURANÇA
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Segurança
+    # --------------------------------------------------------
 
     if abertos_no_periodo and not confirmar:
 
         return {
-
             "status": "CONFIRMACAO_NECESSARIA",
 
             "removiveis": len(candidatos),
@@ -1052,18 +1073,20 @@ def limpar_estado_temporario(
             "abertos": abertos_no_periodo
         }
 
-    # ========================================================
-    # EXCLUSÃO
-    # ========================================================
+
+    # --------------------------------------------------------
+    # Exclusão
+    # --------------------------------------------------------
 
     for chave in candidatos:
 
         estado.pop(chave, None)
 
+
     salvar_estado_temporario(estado)
 
-    return {
 
+    return {
         "status": "OK",
 
         "removidos": len(candidatos),
@@ -1073,7 +1096,7 @@ def limpar_estado_temporario(
 
 
 # ============================================================
-# EXCLUIR AUDITORIA POR PERÍODO
+# EXCLUIR AUDITORIA
 # ============================================================
 
 def excluir_auditoria_periodo(
@@ -1082,10 +1105,11 @@ def excluir_auditoria_periodo(
 ):
 
     inicio = data_inicio(data_inicial).isoformat()
-
     fim = data_fim(data_final).isoformat()
 
+
     conn = conectar_banco()
+
 
     cursor = conn.execute("""
         DELETE FROM auditoria
@@ -1097,20 +1121,38 @@ def excluir_auditoria_periodo(
         fim
     ))
 
+
     removidos = cursor.rowcount
 
     conn.commit()
 
     conn.close()
 
-    return removidos
 
+    return removidos
 
 # ============================================================
 # GERAR CSV DA AUDITORIA
 # ============================================================
 
 def gerar_csv(df):
+    """
+    Gera o arquivo CSV da auditoria.
+
+    IMPORTANTE:
+    Mesmo que o DataFrame esteja vazio, o CSV será criado
+    contendo os nomes das colunas.
+
+    Isso permite testar o formato do relatório antes de
+    existirem transferências registradas.
+    """
+
+    # --------------------------------------------------------
+    # Define as colunas oficiais do relatório.
+    #
+    # Dessa forma, mesmo com ZERO registros, o CSV terá
+    # exatamente estas colunas.
+    # --------------------------------------------------------
 
     colunas = [
         "id",
@@ -1127,13 +1169,20 @@ def gerar_csv(df):
         "data_hora"
     ]
 
+    # --------------------------------------------------------
+    # Se não houver dados, cria um DataFrame vazio
+    # mantendo as colunas do relatório.
+    # --------------------------------------------------------
+
     if df is None or df.empty:
 
-        df = pd.DataFrame(
-            columns=colunas
-        )
+        df = pd.DataFrame(columns=colunas)
 
     else:
+
+        # ----------------------------------------------------
+        # Garante que todas as colunas existam.
+        # ----------------------------------------------------
 
         for coluna in colunas:
 
@@ -1141,7 +1190,15 @@ def gerar_csv(df):
 
                 df[coluna] = ""
 
+        # ----------------------------------------------------
+        # Mantém as colunas na ordem correta.
+        # ----------------------------------------------------
+
         df = df[colunas]
+
+    # --------------------------------------------------------
+    # Cria o arquivo em memória.
+    # --------------------------------------------------------
 
     buffer = io.StringIO()
 
@@ -1152,10 +1209,7 @@ def gerar_csv(df):
         encoding="utf-8-sig"
     )
 
-    return buffer.getvalue().encode(
-        "utf-8-sig"
-    )
-
+    return buffer.getvalue().encode("utf-8-sig")
 
 # ============================================================
 # INICIALIZAÇÃO
@@ -1165,38 +1219,47 @@ inicializar_banco()
 
 
 if "whats_session" not in st.session_state:
+
     st.session_state.whats_session = None
 
 
 if "login_status" not in st.session_state:
+
     st.session_state.login_status = ""
 
 
 if "monitorando" not in st.session_state:
+
     st.session_state.monitorando = True
 
 
 if "ultima_execucao" not in st.session_state:
+
     st.session_state.ultima_execucao = None
 
 
 if "ultima_transferencias" not in st.session_state:
+
     st.session_state.ultima_transferencias = []
 
 
 if "total_ciclos" not in st.session_state:
+
     st.session_state.total_ciclos = 0
 
 
 if "confirmar_limpeza_temp" not in st.session_state:
+
     st.session_state.confirmar_limpeza_temp = False
 
 
 if "confirmar_exclusao_auditoria" not in st.session_state:
+
     st.session_state.confirmar_exclusao_auditoria = False
 
 
 if "limpeza_temp_resultado" not in st.session_state:
+
     st.session_state.limpeza_temp_resultado = None
 
 
@@ -1260,15 +1323,11 @@ st.sidebar.write(
 
 if st.session_state.monitorando:
 
-    st.sidebar.success(
-        "🟢 Monitoramento ativo"
-    )
+    st.sidebar.success("🟢 Monitoramento ativo")
 
 else:
 
-    st.sidebar.warning(
-        "⏸️ Monitoramento pausado"
-    )
+    st.sidebar.warning("⏸️ Monitoramento pausado")
 
 
 st.sidebar.divider()
@@ -1297,6 +1356,9 @@ if st.sidebar.button(
     use_container_width=True
 ):
 
+    estado_atual = carregar_estado_temporario()
+
+    # Busca os tickets que estão abertos neste momento
     try:
 
         tickets_abertos = buscar_tickets_abertos(
@@ -1317,12 +1379,14 @@ if st.sidebar.button(
 
         ids_abertos = set()
 
+
     resultado_limpeza = limpar_estado_temporario(
         data_inicial=data_limpeza,
         data_final=data_limpeza_fim,
         ids_abertos=ids_abertos,
         confirmar=True
     )
+
 
     if resultado_limpeza["status"] == "OK":
 
@@ -1337,6 +1401,7 @@ if st.sidebar.button(
                 f"🔒 {resultado_limpeza['abertos']} "
                 f"atendimentos ainda abertos foram preservados."
             )
+
 
 
 # ============================================================
@@ -1382,692 +1447,401 @@ if st.session_state.whats_session is None:
 
     st.stop()
 
-
 # ============================================================
-# DUAS ABAS
-# ============================================================
-
-aba_monitoramento, aba_auditoria = st.tabs([
-    "📊 Monitoramento",
-    "🔎 Visualizar auditoria"
-])
-
-
-# ============================================================
-# ABA 1 - MONITORAMENTO
+# FRAGMENTO DE MONITORAMENTO
 # ============================================================
 
-with aba_monitoramento:
-
-    run_every = (
-        intervalo
-        if st.session_state.monitorando
-        else None
-    )
+run_every = intervalo if st.session_state.monitorando else None
 
 
-    @st.fragment(
-        run_every=run_every,
-        key="monitor_whatsflux"
-    )
-    def painel_monitoramento():
+@st.fragment(run_every=run_every, key="monitor_whatsflux")
+def painel_monitoramento():
 
-        session = st.session_state.whats_session
+    session = st.session_state.whats_session
+
+    # --------------------------------------------------------
+    # Executa monitoramento
+    # --------------------------------------------------------
+
+    try:
+
+        resultado = executar_monitoramento(session)
+
+        st.session_state.total_ciclos += 1
+        st.session_state.ultima_execucao = agora()
+
+        st.session_state.ultima_transferencias = (
+            resultado.get("transferencias", [])
+        )
 
         # ----------------------------------------------------
-        # EXECUTA MONITORAMENTO
+        # Se encontrou transferências
         # ----------------------------------------------------
 
-        try:
+        transferencias = resultado.get("transferencias", [])
 
-            resultado = executar_monitoramento(
-                session
-            )
+        if transferencias:
 
-            st.session_state.total_ciclos += 1
+            for transferencia in transferencias:
 
-            st.session_state.ultima_execucao = agora()
-
-            st.session_state.ultima_transferencias = (
-                resultado.get(
-                    "transferencias",
-                    []
+                st.toast(
+                    (
+                        f"🔄 Transferência detectada: "
+                        f"{transferencia['anterior']} → "
+                        f"{transferencia['atual']} "
+                        f"(Ticket #{transferencia['ticket_id']})"
+                    ),
+                    icon="🔎"
                 )
-            )
 
-            transferencias = resultado.get(
-                "transferencias",
-                []
-            )
+    except Exception as e:
 
-            if transferencias:
-
-                for transferencia in transferencias:
-
-                    st.toast(
-                        (
-                            f"🔄 Transferência detectada: "
-                            f"{transferencia['anterior']} → "
-                            f"{transferencia['atual']} "
-                            f"(Ticket #{transferencia['ticket_id']})"
-                        ),
-                        icon="🔎"
-                    )
-
-        except Exception as e:
-
-            st.error(
-                f"❌ Erro no monitoramento: {e}"
-            )
-
-            return
-
-
-        # ====================================================
-        # INDICADORES
-        #
-        # MANTIDOS EXATAMENTE COMO NO SEU CÓDIGO ORIGINAL
-        # ====================================================
-
-        estado = resultado.get(
-            "estado",
-            {}
+        st.error(
+            f"❌ Erro no monitoramento: {e}"
         )
 
-        tickets_abertos = resultado.get(
-            "tickets_abertos",
-            0
-        )
-
-        entradas = resultado.get(
-            "entradas",
-            0
-        )
-
-        transferencias = resultado.get(
-            "transferencias",
-            []
-        )
+        return
 
 
-        col1, col2, col3, col4 = st.columns(4)
+    # ========================================================
+    # INDICADORES
+    # ========================================================
+
+    estado = resultado.get("estado", {})
+
+    tickets_abertos = resultado.get(
+        "tickets_abertos",
+        0
+    )
+
+    entradas = resultado.get(
+        "entradas",
+        0
+    )
+
+    transferencias = resultado.get(
+        "transferencias",
+        []
+    )
 
 
-        with col1:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-number">
-                        {tickets_abertos}
-                    </div>
-                    <div class="metric-label">
-                        Tickets abertos
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+    col1, col2, col3, col4 = st.columns(4)
 
 
-        with col2:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-number">
-                        {len(estado)}
-                    </div>
-                    <div class="metric-label">
-                        Em monitoramento
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-
-        with col3:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-number">
-                        {entradas}
-                    </div>
-                    <div class="metric-label">
-                        Novos responsáveis
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-
-        with col4:
-
-            st.markdown(
-                f"""
-                <div class="metric-card">
-                    <div class="metric-number">
-                        {quantidade_auditoria()}
-                    </div>
-                    <div class="metric-label">
-                        Transferências auditadas
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-
-        st.write("")
-
-
-        # ====================================================
-        # STATUS DO MONITOR
-        # ====================================================
-
-        ultima = st.session_state.ultima_execucao
-
-        if ultima:
-
-            horario = ultima.strftime(
-                "%d/%m/%Y %H:%M:%S"
-            )
-
-        else:
-
-            horario = "-"
-
+    with col1:
 
         st.markdown(
             f"""
-            <div class="small-info">
-                🟢 Monitoramento ativo |
-                Última consulta: <strong>{horario}</strong> |
-                Ciclos executados: <strong>{st.session_state.total_ciclos}</strong>
+            <div class="metric-card">
+                <div class="metric-number">
+                    {tickets_abertos}
+                </div>
+                <div class="metric-label">
+                    Tickets abertos
+                </div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
 
-        # ====================================================
-        # TRANSFERÊNCIAS DETECTADAS
-        # ====================================================
+    with col2:
 
-        if transferencias:
-
-            st.write("")
-
-            st.subheader(
-                "🔄 Transferências detectadas neste ciclo"
-            )
-
-            for item in transferencias:
-
-                st.markdown(
-                    f"""
-                    <div class="transfer-card">
-
-                        <strong>
-                            Ticket #{item["ticket_id"]}
-                        </strong>
-
-                        &nbsp; | &nbsp;
-
-                        Cliente:
-                        <strong>
-                            {item["cliente"]}
-                        </strong>
-
-                        <br><br>
-
-                        👤
-                        <strong>
-                            {item["anterior"]}
-                        </strong>
-
-                        &nbsp; ➜ &nbsp;
-
-                        <strong>
-                            {item["atual"]}
-                        </strong>
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-        else:
-
-            st.info(
-                "Nenhuma transferência detectada neste ciclo."
-            )
-
-
-        # ====================================================
-        # ESTADO ATUAL DOS ATENDIMENTOS
-        # ====================================================
-
-        with st.expander(
-            "👥 Atendimentos atualmente monitorados",
-            expanded=False
-        ):
-
-            if estado:
-
-                linhas = []
-
-                for item in estado.values():
-
-                    linhas.append({
-
-                        "Ticket": item.get(
-                            "ticket_id"
-                        ),
-
-                        "Cliente": item.get(
-                            "cliente"
-                        ),
-
-                        "Telefone": item.get(
-                            "telefone"
-                        ),
-
-                        "Técnico": item.get(
-                            "tecnico"
-                        ),
-
-                        "Detectado em": formatar_data_hora(
-                            item.get(
-                                "detectado_em"
-                            )
-                        )
-
-                    })
-
-                df_estado = pd.DataFrame(
-                    linhas
-                )
-
-                if not df_estado.empty:
-
-                    st.dataframe(
-                        df_estado,
-                        use_container_width=True,
-                        hide_index=True
-                    )
-
-            else:
-
-                st.info(
-                    "Nenhum atendimento com técnico "
-                    "está sendo monitorado."
-                )
-
-
-        # ====================================================
-        # EXPORTAÇÃO DA AUDITORIA
-        # ====================================================
-
-        st.write("")
-
-        st.subheader(
-            "📄 Exportar auditoria"
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {len(estado)}
+                </div>
+                <div class="metric-label">
+                    Em monitoramento
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-        st.caption(
-            "Exporte as transferências registradas no banco "
-            "de auditoria. Mesmo sem registros, é possível "
-            "gerar um CSV de teste contendo apenas os cabeçalhos."
+
+    with col3:
+
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {entradas}
+                </div>
+                <div class="metric-label">
+                    Novos responsáveis
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-        col_csv1, col_csv2 = st.columns(2)
 
-        with col_csv1:
+    with col4:
 
-            data_csv_inicial = st.date_input(
-                "Data inicial",
-                value=date.today() - timedelta(days=30),
-                key="data_csv_inicial"
-            )
-
-        with col_csv2:
-
-            data_csv_final = st.date_input(
-                "Data final",
-                value=date.today(),
-                key="data_csv_final"
-            )
-
-        if data_csv_inicial > data_csv_final:
-
-            st.error(
-                "❌ A data inicial não pode ser maior "
-                "que a data final."
-            )
-
-        else:
-
-            df_csv = consultar_auditoria(
-                data_inicial=data_csv_inicial,
-                data_final=data_csv_final,
-                tecnico="Todos"
-            )
-
-            if df_csv.empty:
-
-                st.info(
-                    "ℹ️ Nenhuma transferência encontrada "
-                    "no período. O CSV de teste conterá "
-                    "apenas os cabeçalhos."
-                )
-
-            else:
-
-                st.success(
-                    f"✅ {len(df_csv)} transferência(s) "
-                    f"encontrada(s) no período."
-                )
-
-            arquivo_csv = gerar_csv(
-                df_csv
-            )
-
-            nome_arquivo = (
-                f"auditoria_transferencias_"
-                f"{data_csv_inicial.strftime('%Y%m%d')}_"
-                f"{data_csv_final.strftime('%Y%m%d')}.csv"
-            )
-
-            st.download_button(
-                label="📥 Baixar CSV da auditoria",
-                data=arquivo_csv,
-                file_name=nome_arquivo,
-                mime="text/csv",
-                use_container_width=True
-            )
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {quantidade_auditoria()}
+                </div>
+                <div class="metric-label">
+                    Transferências auditadas
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 
-    # --------------------------------------------------------
-    # EXECUTA MONITORAMENTO
-    # --------------------------------------------------------
-
-    painel_monitoramento()
-
-
-# ============================================================
-# ABA 2 - VISUALIZAR AUDITORIA
-# ============================================================
-
-with aba_auditoria:
-
-    st.subheader(
-        "🔎 Visualizar auditoria"
-    )
-
-    st.caption(
-        "Consulte as transferências registradas no banco "
-        "de auditoria."
-    )
+    st.write("")
 
 
     # ========================================================
-    # FILTROS
+    # STATUS DO MONITOR
     # ========================================================
 
-    col_filtro1, col_filtro2, col_filtro3 = st.columns(3)
+    ultima = st.session_state.ultima_execucao
 
+    if ultima:
 
-    with col_filtro1:
-
-        data_auditoria_inicial = st.date_input(
-            "Data inicial",
-            value=date.today() - timedelta(days=30),
-            key="auditoria_data_inicial"
-        )
-
-
-    with col_filtro2:
-
-        data_auditoria_final = st.date_input(
-            "Data final",
-            value=date.today(),
-            key="auditoria_data_final"
-        )
-
-
-    with col_filtro3:
-
-        tecnicos = listar_tecnicos_auditoria()
-
-        opcoes_tecnicos = [
-            "Todos"
-        ] + tecnicos
-
-        tecnico_filtro = st.selectbox(
-            "Técnico",
-            options=opcoes_tecnicos,
-            key="auditoria_tecnico"
-        )
-
-
-    # ========================================================
-    # VALIDAÇÃO
-    # ========================================================
-
-    if data_auditoria_inicial > data_auditoria_final:
-
-        st.error(
-            "❌ A data inicial não pode ser maior "
-            "que a data final."
+        horario = ultima.strftime(
+            "%d/%m/%Y %H:%M:%S"
         )
 
     else:
 
-        # ====================================================
-        # CONSULTA
-        # ====================================================
+        horario = "-"
 
-        df_auditoria = consultar_auditoria(
-            data_inicial=data_auditoria_inicial,
-            data_final=data_auditoria_final,
-            tecnico=tecnico_filtro
+
+    st.markdown(
+        f"""
+        <div class="small-info">
+            🟢 Monitoramento ativo |
+            Última consulta: <strong>{horario}</strong> |
+            Ciclos executados: <strong>{st.session_state.total_ciclos}</strong>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+    # ========================================================
+    # TRANSFERÊNCIAS DETECTADAS NESTE CICLO
+    # ========================================================
+
+    if transferencias:
+
+        st.write("")
+
+        st.subheader(
+            "🔄 Transferências detectadas neste ciclo"
         )
 
 
-        # ====================================================
-        # TOTAL
-        # ====================================================
+        for item in transferencias:
 
-        if df_auditoria.empty:
+            st.markdown(
+                f"""
+                <div class="transfer-card">
+
+                    <strong>
+                        Ticket #{item["ticket_id"]}
+                    </strong>
+
+                    &nbsp; | &nbsp;
+
+                    Cliente:
+                    <strong>
+                        {item["cliente"]}
+                    </strong>
+
+                    <br><br>
+
+                    👤
+                    <strong>
+                        {item["anterior"]}
+                    </strong>
+
+                    &nbsp; ➜ &nbsp;
+
+                    <strong>
+                        {item["atual"]}
+                    </strong>
+
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+
+    else:
+
+        st.info(
+            "Nenhuma transferência detectada neste ciclo."
+        )
+
+
+    # ========================================================
+    # ESTADO ATUAL DOS ATENDIMENTOS
+    # ========================================================
+
+    with st.expander(
+        "👥 Atendimentos atualmente monitorados",
+        expanded=False
+    ):
+
+        if estado:
+
+            linhas = []
+
+            for item in estado.values():
+
+                linhas.append({
+
+                    "Ticket": item.get("ticket_id"),
+
+                    "Cliente": item.get("cliente"),
+
+                    "Telefone": item.get("telefone"),
+
+                    "Técnico": item.get("tecnico"),
+
+                    "Detectado em": formatar_data_hora(
+                        item.get("detectado_em")
+                    )
+
+                })
+
+
+            df_estado = pd.DataFrame(linhas)
+
+
+            if not df_estado.empty:
+
+                st.dataframe(
+                    df_estado,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+        else:
 
             st.info(
-                "ℹ️ Nenhuma transferência encontrada "
-                "no período selecionado."
+                "Nenhum atendimento com técnico está sendo monitorado."
+            )
+
+    # ========================================================
+    # EXPORTAÇÃO DA AUDITORIA
+    # ========================================================
+
+    st.write("")
+
+    st.subheader("📄 Exportar auditoria")
+
+    st.caption(
+        "Exporte as transferências registradas no banco de auditoria. "
+        "Mesmo sem registros, é possível gerar um CSV de teste "
+        "contendo apenas os cabeçalhos."
+    )
+
+    # --------------------------------------------------------
+    # Datas padrão do relatório
+    # --------------------------------------------------------
+
+    col_csv1, col_csv2 = st.columns(2)
+
+    with col_csv1:
+
+        data_csv_inicial = st.date_input(
+            "Data inicial",
+            value=date.today() - timedelta(days=30),
+            key="data_csv_inicial"
+        )
+
+    with col_csv2:
+
+        data_csv_final = st.date_input(
+            "Data final",
+            value=date.today(),
+            key="data_csv_final"
+        )
+
+    # --------------------------------------------------------
+    # Validação das datas
+    # --------------------------------------------------------
+
+    if data_csv_inicial > data_csv_final:
+
+        st.error(
+            "❌ A data inicial não pode ser maior que a data final."
+        )
+
+    else:
+
+        # ----------------------------------------------------
+        # Consulta a auditoria
+        # ----------------------------------------------------
+
+        df_csv = consultar_auditoria(
+            data_inicial=data_csv_inicial,
+            data_final=data_csv_final,
+            tecnico="Todos"
+        )
+
+        # ----------------------------------------------------
+        # Quantidade encontrada
+        # ----------------------------------------------------
+
+        if df_csv.empty:
+
+            st.info(
+                "ℹ️ Nenhuma transferência encontrada no período. "
+                "O CSV de teste conterá apenas os cabeçalhos."
             )
 
         else:
 
             st.success(
-                f"✅ {len(df_auditoria)} "
-                f"transferência(s) encontrada(s)."
+                f"✅ {len(df_csv)} transferência(s) "
+                f"encontrada(s) no período."
             )
 
+        # ----------------------------------------------------
+        # Gera o CSV.
+        #
+        # A função gerar_csv() foi preparada para funcionar
+        # inclusive quando df_csv estiver vazio.
+        # ----------------------------------------------------
 
-            # =================================================
-            # MOSTRAR REGISTROS
-            # =================================================
+        arquivo_csv = gerar_csv(df_csv)
 
-            for _, registro in df_auditoria.iterrows():
+        # ----------------------------------------------------
+        # Nome do arquivo
+        # ----------------------------------------------------
 
-                registro_id = int(
-                    registro["id"]
-                )
-
-                cliente = (
-                    registro["cliente"]
-                    or "-"
-                )
-
-                telefone = (
-                    registro["telefone"]
-                    or "-"
-                )
-
-                tecnico_anterior = (
-                    registro["tecnico_anterior"]
-                    or "-"
-                )
-
-                tecnico_atual = (
-                    registro["tecnico_atual"]
-                    or "-"
-                )
-
-                ticket_id = (
-                    registro["ticket_id"]
-                    or "-"
-                )
-
-                data_evento = formatar_data_hora(
-                    registro["data_hora"]
-                )
-
-
-                # ---------------------------------------------
-                # Linha principal do registro
-                # ---------------------------------------------
-
-                col_info, col_botao = st.columns(
-                    [8, 1]
-                )
-
-
-                with col_info:
-
-                    st.markdown(
-                        f"""
-                        <div class="audit-card">
-
-                            <div class="audit-title">
-                                🔄 Ticket #{ticket_id}
-                            </div>
-
-                            <div class="audit-info">
-                                👤 Cliente:
-                                <strong>{cliente}</strong>
-                            </div>
-
-                            <div class="audit-info">
-                                📞 Telefone:
-                                <strong>{telefone}</strong>
-                            </div>
-
-                            <div class="audit-info">
-                                🔵 De:
-                                <strong>{tecnico_anterior}</strong>
-
-                                &nbsp;&nbsp;➜&nbsp;&nbsp;
-
-                                🟢 Para:
-                                <strong>{tecnico_atual}</strong>
-                            </div>
-
-                            <div class="audit-info">
-                                🕒 Data:
-                                <strong>{data_evento}</strong>
-                            </div>
-
-                            <div class="audit-info">
-                                🆔 Registro:
-                                <strong>#{registro_id}</strong>
-                            </div>
-
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-
-                with col_botao:
-
-                    st.write("")
-
-                    if st.button(
-                        "🗑️ Excluir",
-                        key=f"excluir_auditoria_{registro_id}",
-                        use_container_width=True
-                    ):
-
-                        removido = excluir_auditoria_id(
-                            registro_id
-                        )
-
-                        if removido:
-
-                            st.success(
-                                "Registro excluído."
-                            )
-
-                            st.rerun()
-
-                        else:
-
-                            st.error(
-                                "Registro não encontrado."
-                            )
-
-
-            # =================================================
-            # TABELA COMPLETA
-            # =================================================
-
-            with st.expander(
-                "📋 Visualizar tabela completa",
-                expanded=False
-            ):
-
-                st.dataframe(
-                    df_auditoria,
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-
-    # ========================================================
-    # EXPORTAÇÃO DENTRO DA ABA DE AUDITORIA
-    # ========================================================
-
-    st.divider()
-
-    st.subheader(
-        "📥 Exportar resultado filtrado"
-    )
-
-
-    if (
-        data_auditoria_inicial <=
-        data_auditoria_final
-    ):
-
-        arquivo_auditoria = gerar_csv(
-            df_auditoria
-        )
-
-        nome_arquivo_auditoria = (
+        nome_arquivo = (
             f"auditoria_transferencias_"
-            f"{data_auditoria_inicial.strftime('%Y%m%d')}_"
-            f"{data_auditoria_final.strftime('%Y%m%d')}.csv"
+            f"{data_csv_inicial.strftime('%Y%m%d')}_"
+            f"{data_csv_final.strftime('%Y%m%d')}.csv"
         )
+
+        # ----------------------------------------------------
+        # Botão de download
+        # ----------------------------------------------------
 
         st.download_button(
-            label="📥 Baixar CSV",
-            data=arquivo_auditoria,
-            file_name=nome_arquivo_auditoria,
+            label="📥 Baixar CSV da auditoria",
+            data=arquivo_csv,
+            file_name=nome_arquivo,
             mime="text/csv",
-            use_container_width=True,
-            key="download_auditoria_aba"
+            use_container_width=True
         )
+
+# ============================================================
+# EXECUTA O MONITORAMENTO
+# ============================================================
+
+painel_monitoramento()
