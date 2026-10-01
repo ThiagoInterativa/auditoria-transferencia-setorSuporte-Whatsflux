@@ -793,26 +793,6 @@ def executar_monitoramento(session):
         "transferencias": transferencias
     }
     
-    # ========================================================
-    # SALVA O ESTADO
-    # ========================================================
-
-    salvar_estado_temporario(estado)
-
-
-    return {
-        "tickets_abertos": len(tickets),
-
-        "ids_abertos": ids_abertos,
-
-        "estado": estado,
-
-        "entradas": entradas,
-
-        "transferencias": transferencias
-    }
-
-
 # ============================================================
 # AUDITORIA - CONSULTA
 # ============================================================
@@ -1130,6 +1110,29 @@ def excluir_auditoria_periodo(
 
 
     return removidos
+
+# ============================================================
+# EXCLUIR UM REGISTRO ESPECÍFICO DA AUDITORIA
+# ============================================================
+
+def excluir_auditoria_registro(registro_id):
+
+    conn = conectar_banco()
+
+    cursor = conn.execute("""
+        DELETE FROM auditoria
+        WHERE id = ?
+    """, (
+        registro_id,
+    ))
+
+    removido = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+
+    return removido
+
 
 # ============================================================
 # GERAR CSV DA AUDITORIA
@@ -1687,11 +1690,21 @@ def painel_monitoramento():
     # ========================================================
     # ESTADO ATUAL DOS ATENDIMENTOS
     # ========================================================
+    # ========================================================
+    # ABAS
+    # ========================================================
 
-    with st.expander(
+    aba_monitoramento, aba_auditoria = st.tabs([
         "👥 Atendimentos atualmente monitorados",
-        expanded=False
-    ):
+        "🔎 Visualizar auditoria"
+    ])
+
+
+    # ========================================================
+    # ABA 1 - ATENDIMENTOS ATUALMENTE MONITORADOS
+    # ========================================================
+
+    with aba_monitoramento:
 
         if estado:
 
@@ -1733,6 +1746,226 @@ def painel_monitoramento():
                 "Nenhum atendimento com técnico está sendo monitorado."
             )
 
+
+    # ========================================================
+    # ABA 2 - VISUALIZAR AUDITORIA
+    # ========================================================
+
+    with aba_auditoria:
+
+        st.subheader("🔎 Visualizar auditoria")
+
+        # ----------------------------------------------------
+        # FILTRO POR PERÍODO
+        # ----------------------------------------------------
+
+        col_auditoria_data1, col_auditoria_data2 = st.columns(2)
+
+        with col_auditoria_data1:
+
+            data_auditoria_inicial = st.date_input(
+                "Data inicial",
+                value=date.today() - timedelta(days=30),
+                key="data_auditoria_inicial"
+            )
+
+        with col_auditoria_data2:
+
+            data_auditoria_final = st.date_input(
+                "Data final",
+                value=date.today(),
+                key="data_auditoria_final"
+            )
+
+
+        # ----------------------------------------------------
+        # VALIDAÇÃO DAS DATAS
+        # ----------------------------------------------------
+
+        if data_auditoria_inicial > data_auditoria_final:
+
+            st.error(
+                "❌ A data inicial não pode ser maior que a data final."
+            )
+
+        else:
+
+            # ------------------------------------------------
+            # CONSULTA O BANCO DE AUDITORIA
+            # ------------------------------------------------
+
+            df_auditoria = consultar_auditoria(
+                data_inicial=data_auditoria_inicial,
+                data_final=data_auditoria_final,
+                tecnico="Todos"
+            )
+
+
+            # ------------------------------------------------
+            # NENHUM REGISTRO
+            # ------------------------------------------------
+
+            if df_auditoria.empty:
+
+                st.info(
+                    "ℹ️ Nenhum registro de auditoria encontrado "
+                    "no período selecionado."
+                )
+
+            else:
+
+                st.success(
+                    f"✅ {len(df_auditoria)} registro(s) "
+                    f"encontrado(s)."
+                )
+
+
+                # --------------------------------------------
+                # CABEÇALHO
+                # --------------------------------------------
+
+                col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([
+                    1.0,
+                    1.6,
+                    1.4,
+                    1.5,
+                    1.5,
+                    1.5,
+                    1.7,
+                    0.9
+                ])
+
+
+                with col1:
+                    st.markdown("**Ticket**")
+
+                with col2:
+                    st.markdown("**Cliente**")
+
+                with col3:
+                    st.markdown("**Telefone**")
+
+                with col4:
+                    st.markdown("**Técnico Anterior**")
+
+                with col5:
+                    st.markdown("**Novo Técnico**")
+
+                with col6:
+                    st.markdown("**Data / Hora**")
+
+                with col7:
+                    st.markdown("**Evento**")
+
+                with col8:
+                    st.markdown("**Ação**")
+
+
+                st.divider()
+
+
+                # --------------------------------------------
+                # REGISTROS
+                # --------------------------------------------
+
+                for _, registro in df_auditoria.iterrows():
+
+                    registro_id = registro["id"]
+
+                    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([
+                        1.0,
+                        1.6,
+                        1.4,
+                        1.5,
+                        1.5,
+                        1.5,
+                        1.7,
+                        0.9
+                    ])
+
+
+                    with col1:
+
+                        st.write(
+                            f"#{registro['ticket_id']}"
+                        )
+
+
+                    with col2:
+
+                        st.write(
+                            registro["cliente"] or "-"
+                        )
+
+
+                    with col3:
+
+                        st.write(
+                            registro["telefone"] or "-"
+                        )
+
+
+                    with col4:
+
+                        st.write(
+                            registro["tecnico_anterior"] or "-"
+                        )
+
+
+                    with col5:
+
+                        st.write(
+                            registro["tecnico_atual"] or "-"
+                        )
+
+
+                    with col6:
+
+                        st.write(
+                            formatar_data_hora(
+                                registro["data_hora"]
+                            )
+                        )
+
+
+                    with col7:
+
+                        st.write(
+                            registro["evento"] or "-"
+                        )
+
+
+                    with col8:
+
+                        if st.button(
+                            "🗑️",
+                            key=f"excluir_auditoria_{registro_id}",
+                            help=f"Excluir registro #{registro_id}"
+                        ):
+
+                            removido = excluir_auditoria_registro(
+                                registro_id
+                            )
+
+                            if removido:
+
+                                st.toast(
+                                    "Registro de auditoria excluído.",
+                                    icon="🗑️"
+                                )
+
+                                st.rerun()
+
+                            else:
+
+                                st.error(
+                                    "Não foi possível excluir o registro."
+                                )
+
+
+                    st.divider()
+
+    
     # ========================================================
     # EXPORTAÇÃO DA AUDITORIA
     # ========================================================
