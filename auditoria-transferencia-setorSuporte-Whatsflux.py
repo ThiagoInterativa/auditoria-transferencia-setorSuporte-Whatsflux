@@ -1695,7 +1695,7 @@ def painel_monitoramento():
     # ========================================================
 
     aba_monitoramento, aba_auditoria = st.tabs([
-        "👥 Atendimentos atualmente monitorados",
+        "👥 Atendimentos monitorados",
         "🔎 Visualizar auditoria"
     ])
 
