@@ -2595,8 +2595,8 @@ def painel_monitoramento():
 
                     st.caption(
                         "Nenhuma transferência encontrada "
-                        "no período. Será gerado um CSV "
-                        "contendo apenas os cabeçalhos."
+                        "no período. Será gerado vazio "
+                        
                     )
 
                 else:
