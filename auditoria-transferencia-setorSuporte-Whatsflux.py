@@ -2470,6 +2470,51 @@ def painel_monitoramento():
                             st.rerun()
 
 
+    # ============================================================
+# DOWNLOAD DO BANCO SQLITE
+# ============================================================
+
+st.write("")
+
+st.subheader("🗄️ Baixar banco de auditoria")
+
+if os.path.exists(AUDIT_DB_FILE):
+
+    try:
+
+        with open(AUDIT_DB_FILE, "rb") as arquivo_db:
+
+            banco_bytes = arquivo_db.read()
+
+        tamanho_mb = len(banco_bytes) / (1024 * 1024)
+
+        st.caption(
+            f"Banco atual: {AUDIT_DB_FILE} | "
+            f"Tamanho: {tamanho_mb:.2f} MB"
+        )
+
+        st.download_button(
+            label="📥 Baixar auditoria.db",
+            data=banco_bytes,
+            file_name="auditoria.db",
+            mime="application/vnd.sqlite3",
+            use_container_width=True,
+            key="download_auditoria_db"
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Não foi possível preparar o banco para download: {e}"
+        )
+
+else:
+
+    st.warning(
+        "⚠️ O arquivo auditoria.db não foi encontrado."
+    )
+
+    
     # ========================================================
     # EXPORTAÇÃO DA AUDITORIA
     # ========================================================
