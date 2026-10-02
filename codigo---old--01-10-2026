@@ -132,6 +132,64 @@ st.markdown("""
     margin-bottom: 8px;
 }
 
+/* ============================================================
+   AVISOS DE CONFIRMAÇÃO DE EXCLUSÃO
+   ============================================================ */
+
+.confirmacao-exclusao {
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 10px 0 14px 0;
+    color: #000000 !important;
+}
+
+.confirmacao-exclusao * {
+    color: #000000 !important;
+}
+
+.confirmacao-exclusao-titulo {
+    font-size: 16px;
+    font-weight: 700;
+    color: #000000 !important;
+    margin-bottom: 6px;
+}
+
+.confirmacao-exclusao-texto {
+    font-size: 14px;
+    color: #000000 !important;
+    line-height: 1.5;
+}
+
+.exclusao-individual {
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    color: #000000 !important;
+}
+
+.exclusao-individual * {
+    color: #000000 !important;
+}
+
+.exclusao-individual-titulo {
+    font-size: 15px;
+    font-weight: 700;
+    color: #000000 !important;
+    margin-bottom: 5px;
+}
+
+.exclusao-individual-texto {
+    font-size: 13px;
+    color: #000000 !important;
+    line-height: 1.4;
+}
+
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -2220,18 +2278,22 @@ def painel_monitoramento():
 
                     st.markdown(
                         """
-                        <div class="audit-confirmation">
-                            <strong>
+                        <div class="confirmacao-exclusao">
+
+                            <div class="confirmacao-exclusao-titulo">
                                 ⚠️ Confirmar exclusão
-                            </strong>
-                            <br>
-                            Os registros selecionados serão
-                            removidos definitivamente da auditoria.
-                            Essa ação não poderá ser desfeita.
+                            </div>
+
+                            <div class="confirmacao-exclusao-texto">
+                                Os registros selecionados serão removidos definitivamente
+                                da auditoria. Essa ação não poderá ser desfeita.
+                            </div>
+
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
+
 
 
                     col_conf1, col_conf2 = st.columns(2)
@@ -2300,14 +2362,13 @@ def painel_monitoramento():
 
                     st.markdown(
                         """
-                        <div class="audit-confirmation">
-                            <strong>
+                        <div class="exclusao-individual">
+                            <div class="exclusao-individual-titulo">
                                 🗑️ Exclusão individual
-                            </strong>
-                            <br>
-                            Selecione abaixo o registro que deseja
-                            excluir.
-                        </div>
+                            </div>
+                            <div class="exclusao-individual-texto">
+                                Selecione abaixo o registro que deseja excluir.
+                            </div>
                         """,
                         unsafe_allow_html=True
                     )
