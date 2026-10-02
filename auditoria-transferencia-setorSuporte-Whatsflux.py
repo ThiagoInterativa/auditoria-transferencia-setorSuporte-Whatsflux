@@ -2469,106 +2469,247 @@ def painel_monitoramento():
 
                             st.rerun()
 
+        # ========================================================
+        # EXPORTAÇÃO E DOWNLOAD DA AUDITORIA
+        # ========================================================
+        #
+        # IMPORTANTE:
+        # Este bloco fica DENTRO da aba "Visualizar auditoria".
+        #
+        # Teremos dois botões lado a lado:
+        #
+        # | EXPORTAR CSV          | BAIXAR BANCO |
+        # | [ botão CSV ]         | [ botão DB ]  |
+        #
+        # ========================================================
 
-    # ========================================================
-    # EXPORTAÇÃO DA AUDITORIA
-    # ========================================================
+        st.write("")
 
-    st.write("")
+        st.subheader(
+            "📦 Exportar auditoria"
+        )
 
-    st.subheader(
-        "📄 Exportar auditoria"
-    )
-
-
-    st.caption(
-        "Exporte as transferências registradas no banco de auditoria. "
-        "Mesmo sem registros, é possível gerar um CSV de teste "
-        "contendo apenas os cabeçalhos."
-    )
-
-
-    # --------------------------------------------------------
-    # DATAS
-    # --------------------------------------------------------
-
-    col_csv1, col_csv2 = st.columns(2)
-
-
-    with col_csv1:
-
-        data_csv_inicial = st.date_input(
-            "Data inicial",
-            value=date.today() - timedelta(days=30),
-            key="data_csv_inicial"
+        st.caption(
+            "Exporte os registros da auditoria em CSV "
+            "ou baixe o banco SQLite completo para análise."
         )
 
 
-    with col_csv2:
+        # ========================================================
+        # DATAS DO CSV
+        # ========================================================
 
-        data_csv_final = st.date_input(
-            "Data final",
-            value=date.today(),
-            key="data_csv_final"
-        )
+        col_csv1, col_csv2 = st.columns(2)
 
 
-    # --------------------------------------------------------
-    # VALIDAÇÃO
-    # --------------------------------------------------------
+        with col_csv1:
 
-    if data_csv_inicial > data_csv_final:
-
-        st.error(
-            "❌ A data inicial não pode ser maior "
-            "que a data final."
-        )
-
-    else:
-
-        df_csv = consultar_auditoria(
-            data_inicial=data_csv_inicial,
-            data_final=data_csv_final,
-            tecnico="Todos"
-        )
+            data_csv_inicial = st.date_input(
+                "Data inicial",
+                value=date.today() - timedelta(days=30),
+                key="data_csv_inicial"
+            )
 
 
-        if df_csv.empty:
+        with col_csv2:
 
-            st.info(
-                "ℹ️ Nenhuma transferência encontrada "
-                "no período. O CSV de teste conterá "
-                "apenas os cabeçalhos."
+            data_csv_final = st.date_input(
+                "Data final",
+                value=date.today(),
+                key="data_csv_final"
+            )
+
+
+        # ========================================================
+        # VALIDAÇÃO DAS DATAS
+        # ========================================================
+
+        if data_csv_inicial > data_csv_final:
+
+            st.error(
+                "❌ A data inicial não pode ser maior "
+                "que a data final."
             )
 
         else:
 
-            st.success(
-                f"✅ {len(df_csv)} transferência(s) "
-                f"encontrada(s) no período."
+            # ====================================================
+            # CONSULTA OS REGISTROS PARA O CSV
+            # ====================================================
+
+            df_csv = consultar_auditoria(
+                data_inicial=data_csv_inicial,
+                data_final=data_csv_final,
+                tecnico="Todos"
             )
 
 
-        arquivo_csv = gerar_csv(
-            df_csv
-        )
+            # ====================================================
+            # GERA O ARQUIVO CSV
+            # ====================================================
+
+            arquivo_csv = gerar_csv(
+                df_csv
+            )
 
 
-        nome_arquivo = (
-            f"auditoria_transferencias_"
-            f"{data_csv_inicial.strftime('%Y%m%d')}_"
-            f"{data_csv_final.strftime('%Y%m%d')}.csv"
-        )
+            # ====================================================
+            # NOME DO ARQUIVO CSV
+            # ====================================================
+
+            nome_arquivo = (
+                f"auditoria_transferencias_"
+                f"{data_csv_inicial.strftime('%Y%m%d')}_"
+                f"{data_csv_final.strftime('%Y%m%d')}.csv"
+            )
 
 
-        st.download_button(
-            label="📥 Baixar CSV da auditoria",
-            data=arquivo_csv,
-            file_name=nome_arquivo,
-            mime="text/csv",
-            use_container_width=True
-        )
+            # ====================================================
+            # DUAS COLUNAS PARA OS DOIS DOWNLOADS
+            # ====================================================
 
+            col_exportar_csv, col_baixar_banco = st.columns(2)
+
+
+            # ====================================================
+            # COLUNA 1 - EXPORTAR CSV
+            # ====================================================
+
+            with col_exportar_csv:
+
+                st.markdown(
+                    """
+                    <div style="
+                        font-weight: 700;
+                        font-size: 16px;
+                        margin-bottom: 6px;
+                    ">
+                        📄 Exportar CSV
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+
+                if df_csv.empty:
+
+                    st.caption(
+                        "Nenhuma transferência encontrada "
+                        "no período. Será gerado um CSV "
+                        "contendo apenas os cabeçalhos."
+                    )
+
+                else:
+
+                    st.caption(
+                        f"{len(df_csv)} transferência(s) "
+                        f"encontrada(s) no período."
+                    )
+
+
+                st.download_button(
+                    label="📥 Baixar CSV da auditoria",
+
+                    data=arquivo_csv,
+
+                    file_name=nome_arquivo,
+
+                    mime="text/csv",
+
+                    use_container_width=True,
+
+                    key="download_csv_auditoria"
+                )
+
+
+            # ====================================================
+            # COLUNA 2 - BAIXAR BANCO SQLITE
+            # ====================================================
+
+            with col_baixar_banco:
+
+                st.markdown(
+                    """
+                    <div style="
+                        font-weight: 700;
+                        font-size: 16px;
+                        margin-bottom: 6px;
+                    ">
+                        🗄️ Baixar banco de auditoria
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+
+                # ------------------------------------------------
+                # Verifica se o arquivo auditoria.db existe
+                # ------------------------------------------------
+
+                if os.path.exists(AUDIT_DB_FILE):
+
+                    try:
+
+                        # --------------------------------------------
+                        # Lê o banco SQLite como bytes
+                        # --------------------------------------------
+
+                        with open(
+                            AUDIT_DB_FILE,
+                            "rb"
+                        ) as arquivo_db:
+
+                            banco_bytes = arquivo_db.read()
+
+
+                        # --------------------------------------------
+                        # Calcula o tamanho do banco
+                        # --------------------------------------------
+
+                        tamanho_mb = (
+                            len(banco_bytes)
+                            / (1024 * 1024)
+                        )
+
+
+                        st.caption(
+                            f"Banco atual: {AUDIT_DB_FILE} "
+                            f"({tamanho_mb:.2f} MB)"
+                        )
+
+
+                        # --------------------------------------------
+                        # BOTÃO PARA BAIXAR O BANCO COMPLETO
+                        # --------------------------------------------
+
+                        st.download_button(
+                            label="📥 Baixar auditoria.db",
+
+                            data=banco_bytes,
+
+                            file_name="auditoria.db",
+
+                            mime="application/vnd.sqlite3",
+
+                            use_container_width=True,
+
+                            key="download_banco_auditoria"
+                        )
+
+
+                    except Exception as e:
+
+                        st.error(
+                            "❌ Não foi possível preparar "
+                            f"o banco para download: {e}"
+                        )
+
+                else:
+
+                    st.warning(
+                        "⚠️ O arquivo auditoria.db "
+                        "não foi encontrado."
+                    )
 
 # ============================================================
 # EXECUTA O MONITORAMENTO
