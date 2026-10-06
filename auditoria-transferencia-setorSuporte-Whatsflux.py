@@ -381,6 +381,42 @@ def inicializar_banco():
 
 
 # ============================================================
+# CONSULTAS DE MÉTRICAS DA AUDITORIA
+# ============================================================
+
+def contar_transferencias_hoje():
+    """
+    Busca no PostgreSQL apenas as transferências que ocorreram 
+    no dia de hoje (entre 00:00:00 e 23:59:59).
+    """
+    conn = conectar_banco()
+    try:
+        with conn.cursor() as cursor:
+            # Pegamos a data atual no fuso horário correto
+            hoje_dt = agora().date()
+            
+            # Utilizamos as funções utilitárias que você já possui no código
+            inicio = data_inicio(hoje_dt)
+            fim = data_fim(hoje_dt)
+            
+            # Query filtrando pelo intervalo do dia de hoje
+            query = """
+                SELECT COUNT(*) 
+                FROM auditoria 
+                WHERE data_hora >= %s AND data_hora <= %s;
+            """
+            cursor.execute(query, (inicio, fim))
+            resultado = cursor.fetchone()
+            
+            # Retorna o número de linhas encontradas
+            return resultado[0] if resultado else 0
+    except Exception as e:
+        st.error(f"Erro ao contar transferências de hoje: {e}")
+        return 0
+    finally:
+        conn.close()
+        
+# ============================================================
 # ESTADO PERSISTENTE DO MONITORAMENTO (POSTGRESQL)
 # ============================================================
 
@@ -1414,16 +1450,17 @@ def painel_monitoramento():
             f"❌ Erro no monitoramento: {e}"
         )
         return
-
     # ========================================================
     # INDICADORES
     # ========================================================
+    # 1. Buscamos os valores atualizados direto do banco de dados
+    total_hoje = contar_transferencias_hoje()
     estado = resultado.get("estado", {})
     tickets_abertos = resultado.get("tickets_abertos", 0)
     entradas = resultado.get("entradas", 0)
     transferencias = resultado.get("transferencias", [])
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         st.markdown(
@@ -1471,6 +1508,23 @@ def painel_monitoramento():
         )
 
     with col4:
+        # CORRIGIDO: O comentário agora está alinhado corretamente com 8 espaços
+        # Card original modificado: Transferência auditada (Mostra APENAS o dia de hoje)
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-number">
+                    {total_hoje}
+                </div>
+                <div class="metric-label">
+                    Transferência auditada (Hoje)
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+    with col5:
         st.markdown(
             f"""
             <div class="metric-card">
@@ -1478,7 +1532,7 @@ def painel_monitoramento():
                     {quantidade_auditoria()}
                 </div>
                 <div class="metric-label">
-                    Transferências auditadas
+                    Transferências auditada (periodo)
                 </div>
             </div>
             """,
