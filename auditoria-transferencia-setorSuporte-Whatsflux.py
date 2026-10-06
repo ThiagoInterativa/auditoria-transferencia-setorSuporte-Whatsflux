@@ -1538,7 +1538,7 @@ def painel_monitoramento():
                     {quantidade_auditoria()}
                 </div>
                 <div class="metric-label">
-                    Transferências auditadas (periodo)
+                    Transferências (periodo)
                 </div>
             </div>
             """,
