@@ -109,7 +109,7 @@ st.markdown("""
     padding: 18px;
     text-align: center;
     /* Adicione as duas linhas abaixo para travar a altura e alinhar o conteúdo */
-    min-height: 140px;
+    min-height: 120px;
     display: flex;
     flex-direction: column;
     justify-content: center;
