@@ -1517,7 +1517,7 @@ def painel_monitoramento():
                     {total_hoje}
                 </div>
                 <div class="metric-label">
-                    Transferência auditada (Hoje)
+                    Transferência (Hoje)
                 </div>
             </div>
             """,
