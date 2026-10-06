@@ -108,6 +108,12 @@ st.markdown("""
     border-radius: 10px;
     padding: 18px;
     text-align: center;
+    /* Adicione as duas linhas abaixo para travar a altura e alinhar o conteúdo */
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    
 }
 
 .metric-number {
@@ -1532,7 +1538,7 @@ def painel_monitoramento():
                     {quantidade_auditoria()}
                 </div>
                 <div class="metric-label">
-                    Transferências auditada (periodo)
+                    Transferências auditadas (periodo)
                 </div>
             </div>
             """,
